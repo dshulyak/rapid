@@ -10,8 +10,13 @@ import (
 )
 
 var (
-	ANY = []byte("ANY")
+	any      = []byte("ANY")
+	anyValue = &types.Value{Id: any}
 )
+
+func IsAny(value *types.Value) bool {
+	return bytes.Compare(value.Id, any) == 0
+}
 
 type MessageTo struct {
 	Message *types.Message
@@ -23,9 +28,34 @@ type MessageFrom struct {
 	From    uint64
 }
 
+type Config struct {
+	Timeout   int
+	ReplicaID uint64
+	Quorum    int
+	Replicas  []uint64
+}
+
+func newPaxos(logger *zap.SugaredLogger, store Persistence, conf Config) *paxos {
+	replicas := map[uint64]struct{}{}
+	for _, r := range conf.Replicas {
+		replica[r] = struct{}{}
+	}
+	return &paxos{
+		logger:             logger,
+		store:              store,
+		replicaID:          conf.ReplicaID,
+		qsize:              conf.Quorum,
+		timeout:            conf.Timeout,
+		replicas:           replicas,
+		promiseAggregates:  map[uint64]*aggregate{},
+		acceptedAggregates: map[uint64]*aggregate{},
+	}
+}
+
 // paxos is an implementation of fast multipaxos variant of the algorithm.
 type paxos struct {
 	logger *zap.SugaredLogger
+	store  Persistence
 
 	// configuration
 	replicaID uint64
@@ -46,17 +76,17 @@ type paxos struct {
 	proposed           *queue
 
 	// persistent state
-	log    Log
-	ballot Ballot
+	log    *Log
+	ballot *Ballot
 	// commited is not nil only for the coordinator
-	commited CommitedState
+	commited *CommitedState
 }
 
-func (p *paxos) Tick() ([]*types.Message, error) {
+func (p *paxos) Tick() ([]MessageTo, error) {
 	p.ticks++
 	if p.ticks == p.timeout {
 		p.ticks = 0
-		return p.startBallot()
+		return p.slowBallot(p.ballot.Get() + 1)
 	}
 	return nil, nil
 }
@@ -66,14 +96,10 @@ func (p *paxos) Propose(value *types.Value) error {
 	return nil
 }
 
-func (p *paxos) startBallot() ([]*types.Message, error) {
-	bal := p.ballot.Get() + 1
+func (p *paxos) slowBallot(bal uint64) ([]MessageTo, error) {
 	seq := p.log.Commited() + 1
-
 	p.promiseAggregates[seq] = newAggregate(p.qsize)
-
-	prepare := types.NewPrepareMessage(bal, seq)
-	return []*types.Message{prepare}, nil
+	return []MessageTo{{Message: types.NewPrepareMessage(bal, seq)}}, nil
 }
 
 func (p *paxos) Step(msg MessageFrom) ([]MessageTo, error) {
@@ -142,6 +168,10 @@ func (p *paxos) stepPromise(msg MessageFrom) ([]MessageTo, error) {
 		return nil, nil
 	}
 	p.commited.Update(msg.From, promise.CommitedSequence)
+	msgs, err := p.updateReplicas()
+	if err != nil {
+		return nil, err
+	}
 
 	agg, exist := p.promiseAggregates[promise.Sequence]
 	if !exist {
@@ -168,12 +198,11 @@ func (p *paxos) stepPromise(msg MessageFrom) ([]MessageTo, error) {
 		delete(p.promiseAggregates, seq)
 		p.acceptedAggregates[seq] = newAggregate(p.qsize)
 		if value == nil {
-			value = &types.Value{Id: ANY}
+			value = anyValue
 		}
-		return []MessageTo{
-			{
-				Message: types.NewAcceptMessage(p.ballot.Get(), seq, value),
-			}}, nil
+		return append(msgs, MessageTo{
+			Message: types.NewAcceptMessage(p.ballot.Get(), seq, value),
+		}), nil
 	}
 	return nil, nil
 }
@@ -192,7 +221,7 @@ func (p *paxos) stepAccept(msg MessageFrom) ([]MessageTo, error) {
 		}, nil
 	}
 	value := accept.Value
-	if bytes.Compare(value.Id, ANY) == 0 {
+	if IsAny(value) {
 		// pick value from proposed queue
 		if p.proposed.empty() {
 			return nil, nil
@@ -243,7 +272,26 @@ func (p *paxos) stepAccepted(msg MessageFrom) ([]MessageTo, error) {
 				Value:    value,
 			}
 			p.log.Commit(learned)
-			return p.updateReplicas()
+
+			var msgs []MessageTo
+			if !p.skipPrepareAllowed() {
+				start, err := p.slowBallot(max)
+				if err != nil {
+					return nil, err
+				}
+				msgs = append(msgs, start...)
+			} else {
+				msgs = append(msgs, MessageTo{
+					Message: types.NewAcceptMessage(p.ballot.Get(), p.log.Commited()+1, anyValue),
+				})
+			}
+
+			updates, err := p.updateReplicas()
+			if err != nil {
+				return nil, err
+			}
+
+			return append(msgs, updates...), nil
 		}
 		// coordinated recovery
 
@@ -274,6 +322,9 @@ func (p *paxos) stepLearned(msg MessageFrom) ([]MessageTo, error) {
 func (p *paxos) updateReplicas() (messages []MessageTo, err error) {
 	commited := p.log.Commited()
 	for i := range p.replicas {
+		if i == p.replicaID {
+			continue
+		}
 		rcomm := p.commited.Get(i)
 		// in paxos coordinator can be elected even if his log is not the most recent
 		// in such case he will eventually catch up
@@ -284,4 +335,20 @@ func (p *paxos) updateReplicas() (messages []MessageTo, err error) {
 		messages = append(messages, MessageTo{Message: types.NewLearnedMessage(values...), To: []uint64{i}})
 	}
 	return messages, nil
+}
+
+// skipPrepareAllowed is allowed if coordinator has the most recent log among majority of the cluster.
+func (p *paxos) skipPrepareAllowed() bool {
+	commited := p.log.Commited()
+	count := 0
+	for i := range p.replicas {
+		rcomm := p.commited.Get(i)
+		if commited >= rcomm {
+			count++
+		}
+		if count == p.qsize {
+			return true
+		}
+	}
+	return false
 }
