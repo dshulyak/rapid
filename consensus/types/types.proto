@@ -1,0 +1,51 @@
+syntax = "proto3";
+
+message Message {
+  oneof type {
+    Prepare prepare = 1;
+    Promise promise = 2;
+    Accept accept = 3;
+    Accepted accepted = 4;
+    Learned learned = 5;
+  }
+}
+
+message Prepare {
+  uint64 ballot = 1;
+  uint64 sequence = 2;
+}
+
+message Value {
+  bytes id = 1;
+  bytes data = 2;
+}
+
+message Promise {
+  uint64 ballot = 1;
+  uint64 sequence = 2;
+  uint64 voteBallot = 3;
+  Value value = 4;
+  uint64 commitedSequence = 5;
+}
+
+message Accept {
+  uint64 ballot = 1;
+  uint64 sequence = 2;
+  Value value = 3;
+}
+
+message Accepted {
+  uint64 ballot = 1;
+  uint64 sequence = 2;
+  Value value = 3;
+}
+
+message LearnedValue {
+  uint64 ballot = 1;
+  uint64 sequence = 2;
+  Value value = 3;
+}
+
+message Learned {
+  repeated LearnedValue values = 1;
+}
