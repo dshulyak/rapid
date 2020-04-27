@@ -35,8 +35,8 @@ func TestPrepareNewOnTimeout(t *testing.T) {
 	store := memory.New()
 	pax := testPaxos(store, defaultConfig())
 
-	messages, err := pax.Tick()
-	require.NoError(t, err)
+	require.NoError(t, pax.Tick())
+	messages := pax.Messages()
 	require.Len(t, messages, 1)
 
 	prepare := messages[0].Message.GetPrepare()
@@ -54,8 +54,8 @@ func TestPromiseNilForValidPrepare(t *testing.T) {
 		From:    2,
 	}
 
-	messages, err := pax.Step(msg)
-	require.NoError(t, err)
+	require.NoError(t, pax.Step(msg))
+	messages := pax.Messages()
 	require.Len(t, messages, 1)
 
 	promise := messages[0].Message.GetPromise()
@@ -83,8 +83,8 @@ func TestPromisePreviousPromise(t *testing.T) {
 	}
 	require.NoError(t, store.AddLogs(context.TODO(), logs))
 
-	messages, err := pax.Step(msg)
-	require.NoError(t, err)
+	require.NoError(t, pax.Step(msg))
+	messages := pax.Messages()
 	require.Len(t, messages, 1)
 
 	promise := messages[0].Message.GetPromise()
@@ -100,8 +100,8 @@ func TestAcceptAnyNilPromisesAggregated(t *testing.T) {
 	pax := testPaxos(store, conf)
 
 	// Timeout should start a new ballot, and initialize helpers to track received promises
-	messages, err := pax.Tick()
-	require.NoError(t, err)
+	require.NoError(t, pax.Tick())
+	messages := pax.Messages()
 	require.Len(t, messages, 1)
 
 	prepare := messages[0].Message.GetPrepare()
@@ -109,15 +109,13 @@ func TestAcceptAnyNilPromisesAggregated(t *testing.T) {
 	require.Equal(t, 1, int(prepare.Ballot))
 	require.Equal(t, 1, int(prepare.Sequence))
 
-	var replies []consensus.MessageTo
 	for _, r := range conf.Replicas {
-		messages, err := pax.Step(consensus.MessageFrom{
+		require.NoError(t, pax.Step(consensus.MessageFrom{
 			From:    r,
 			Message: types.NewPromiseMessage(1, 1, 0, 0, nil),
-		})
-		require.NoError(t, err)
-		replies = append(replies, messages...)
+		}))
 	}
+	replies := pax.Messages()
 	require.Len(t, replies, 1)
 	accept := replies[0].Message.GetAccept()
 	require.True(t, consensus.IsAny(accept.Value))
@@ -125,13 +123,13 @@ func TestAcceptAnyNilPromisesAggregated(t *testing.T) {
 
 func TestAnyAcceptMajorityOfQuorum(t *testing.T) {
 	store := memory.New()
-	store.SetBallot(context.TODO(), 1)
+	require.NoError(t, store.SetBallot(context.TODO(), 1))
 	conf := defaultConfig()
 	pax := testPaxos(store, conf)
 
 	// Timeout should start a new ballot, and initialize helpers to track received promises
-	messages, err := pax.Tick()
-	require.NoError(t, err)
+	require.NoError(t, pax.Tick())
+	messages := pax.Messages()
 	require.Len(t, messages, 1)
 
 	prepare := messages[0].Message.GetPrepare()
@@ -140,10 +138,9 @@ func TestAnyAcceptMajorityOfQuorum(t *testing.T) {
 	require.Equal(t, 1, int(prepare.Sequence))
 
 	var (
-		first   = []byte("first")
-		second  = []byte("second")
-		replies []consensus.MessageTo
-		send    = []consensus.MessageFrom{
+		first  = []byte("first")
+		second = []byte("second")
+		send   = []consensus.MessageFrom{
 			{
 				Message: types.NewPromiseMessage(2, 1, 1, 0, &types.Value{Id: second}),
 				From:    2,
@@ -159,10 +156,9 @@ func TestAnyAcceptMajorityOfQuorum(t *testing.T) {
 		}
 	)
 	for _, m := range send {
-		step, err := pax.Step(m)
-		require.NoError(t, err)
-		replies = append(replies, step...)
+		require.NoError(t, pax.Step(m))
 	}
+	replies := pax.Messages()
 	require.Len(t, replies, 1)
 	accept := replies[0].Message.GetAccept()
 	require.Equal(t, string(first), string(accept.Value.Id))

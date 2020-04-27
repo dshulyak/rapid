@@ -84,30 +84,58 @@ type Paxos struct {
 	ballot *Ballot
 	// commited is not nil only for the coordinator
 	commited *CommitedState
+
+	messages []MessageTo
+
+	values []*types.LearnedValue
 }
 
-func (p *Paxos) Tick() ([]MessageTo, error) {
+func (p *Paxos) Tick() error {
 	p.ticks++
 	if p.ticks == p.timeout {
 		p.ticks = 0
-		return p.slowBallot(p.ballot.Get() + 1)
+		p.slowBallot(p.ballot.Get() + 1)
 	}
-	return nil, nil
+	return nil
 }
 
 func (p *Paxos) Propose(value *types.Value) error {
+	// TODO if replica received Accept(Any) for the current ballot it should
+	// send Accepted to coordinator as soon as value is added to submitssion queue.
 	p.proposed.add(value)
 	return nil
 }
 
-func (p *Paxos) slowBallot(bal uint64) ([]MessageTo, error) {
+func (p *Paxos) slowBallot(bal uint64) {
 	seq := p.log.Commited() + 1
 	p.promiseAggregates[seq] = newAggregate(p.qsize)
 	p.ballot.Set(bal)
-	return []MessageTo{{Message: types.NewPrepareMessage(bal, seq)}}, nil
+	p.send(MessageTo{Message: types.NewPrepareMessage(bal, seq)})
 }
 
-func (p *Paxos) Step(msg MessageFrom) ([]MessageTo, error) {
+// Messages returns staged messages and clears ingress of messages
+func (p *Paxos) Messages() []MessageTo {
+	msgs := p.messages
+	p.messages = nil
+	return msgs
+}
+
+func (p *Paxos) commit(values ...*types.LearnedValue) {
+	p.log.Commit(values...)
+	p.values = append(p.values, values...)
+}
+
+func (p *Paxos) Values() []*types.LearnedValue {
+	values := p.values
+	p.values = nil
+	return values
+}
+
+func (p *Paxos) send(msg MessageTo) {
+	p.messages = append(p.messages, msg)
+}
+
+func (p *Paxos) Step(msg MessageFrom) error {
 	if prepare := msg.Message.GetPrepare(); prepare != nil {
 		return p.stepPrepare(msg)
 	}
@@ -125,20 +153,20 @@ func (p *Paxos) Step(msg MessageFrom) ([]MessageTo, error) {
 	}
 	// TODO export unknown message error
 	// can be used to blacklist replica with incompatible protocol
-	return nil, errors.New("unknown message")
+	return errors.New("unknown message")
 }
 
 // TODO move to Acceptor role.
-func (p *Paxos) stepPrepare(msg MessageFrom) ([]MessageTo, error) {
+func (p *Paxos) stepPrepare(msg MessageFrom) error {
 	prepare := msg.Message.GetPrepare()
 	if prepare.Ballot <= p.ballot.Get() {
 		// return only a ballot for the sender to update himself
-		return []MessageTo{
-			{
-				Message: types.NewFailedPromiseMessage(p.ballot.Get()),
-				To:      []uint64{msg.From},
-			},
-		}, nil
+		p.send(MessageTo{
+
+			Message: types.NewFailedPromiseMessage(p.ballot.Get()),
+			To:      []uint64{msg.From},
+		})
+		return nil
 	}
 	p.ticks = 0
 	p.ballot.Set(prepare.Ballot)
@@ -151,7 +179,7 @@ func (p *Paxos) stepPrepare(msg MessageFrom) ([]MessageTo, error) {
 		value = learned.Value
 		voted = learned.Ballot
 	}
-	return []MessageTo{{
+	p.send(MessageTo{
 		Message: types.NewPromiseMessage(
 			p.ballot.Get(),
 			prepare.Sequence,
@@ -160,32 +188,30 @@ func (p *Paxos) stepPrepare(msg MessageFrom) ([]MessageTo, error) {
 			value,
 		),
 		To: []uint64{msg.From},
-	}}, nil
+	})
+	return nil
 }
 
 // TODO stepPromise must be processed by Coordinator role.
-func (p *Paxos) stepPromise(msg MessageFrom) ([]MessageTo, error) {
+func (p *Paxos) stepPromise(msg MessageFrom) error {
 	promise := msg.Message.GetPromise()
 	if promise.Ballot > p.ballot.Get() {
 		p.logger.Debug("received newer ballot in promise.", " ballot=", promise.Ballot, " from=", msg.From)
 		// TODO step down from leader role
 		p.ballot.Set(promise.Ballot)
-		return nil, nil
+		return nil
 	}
 	// ignore old messages
 	if promise.Ballot < p.ballot.Get() {
-		return nil, nil
+		return nil
 	}
 	p.commited.Update(msg.From, promise.CommitedSequence)
-	msgs, err := p.updateReplicas()
-	if err != nil {
-		return nil, err
-	}
+	p.updateReplicas()
 
 	agg, exist := p.promiseAggregates[promise.Sequence]
 	if !exist {
-		p.logger.Debug("useless message.", " ballot=", promise.Ballot, " sequence=", promise.Sequence)
-		return nil, nil
+		p.logger.Debug("ignored promise.", " ballot=", promise.Ballot, " sequence=", promise.Sequence)
+		return nil
 	}
 
 	agg.add(msg.From, promise.Ballot, promise.Value)
@@ -197,37 +223,37 @@ func (p *Paxos) stepPromise(msg MessageFrom) ([]MessageTo, error) {
 		if value == nil {
 			value = anyValue
 		}
-		return append(msgs, MessageTo{
+		p.send(MessageTo{
 			Message: types.NewAcceptMessage(p.ballot.Get(), promise.Sequence, value),
-		}), nil
+		})
+		return nil
 	}
-	return nil, nil
+	return nil
 }
 
 // Accept message received by Acceptors
-func (p *Paxos) stepAccept(msg MessageFrom) ([]MessageTo, error) {
+func (p *Paxos) stepAccept(msg MessageFrom) error {
 	accept := msg.Message.GetAccept()
 	if p.ballot.Get() > accept.Ballot {
 		// it can also return failed accepted message, but returning failed promise is
 		// safe from protocol pov and tehcnically achieves the same result.
 		// the purpose is the same as in stepPrepare - for coordinator to update himself
-		return []MessageTo{
-			{
-				Message: types.NewFailedPromiseMessage(p.ballot.Get()),
-				To:      []uint64{msg.From},
-			},
-		}, nil
+		p.send(MessageTo{
+			Message: types.NewFailedPromiseMessage(p.ballot.Get()),
+			To:      []uint64{msg.From},
+		})
+		return nil
 	}
 	p.ticks = 0
 	value := accept.Value
 	if value == nil {
 		p.logger.Debug("received heartbeat.", " from=", msg.From)
-		return nil, nil
+		return nil
 	}
 	if IsAny(value) {
 		// pick value from proposed queue
 		if p.proposed.empty() {
-			return nil, nil
+			return nil
 		}
 		value = p.proposed.pop()
 	}
@@ -236,106 +262,95 @@ func (p *Paxos) stepAccept(msg MessageFrom) ([]MessageTo, error) {
 		Sequence: accept.Sequence,
 		Value:    value,
 	})
-	return []MessageTo{
-		{
-			Message: types.NewAcceptedMessage(accept.Ballot, accept.Sequence, value),
-			To:      []uint64{msg.From},
-		},
-	}, nil
+	p.send(MessageTo{
+		Message: types.NewAcceptedMessage(accept.Ballot, accept.Sequence, value),
+		To:      []uint64{msg.From},
+	})
+	return nil
 }
 
 // Accepted received by Coordinator.
-func (p *Paxos) stepAccepted(msg MessageFrom) ([]MessageTo, error) {
+func (p *Paxos) stepAccepted(msg MessageFrom) error {
 	accepted := msg.Message.GetAccepted()
 	if p.ballot.Get() > accepted.Ballot {
 		// TODO step down from leader role
 		p.ballot.Set(accepted.Ballot)
-		return nil, nil
+		return nil
 	}
-	// ignore old messages
+	// TODO send that node an update with new ballot
 	if accepted.Ballot < p.ballot.Get() {
-		return nil, nil
+		return nil
 	}
 	agg, exist := p.acceptedAggregates[accepted.Sequence]
 	if !exist {
 		p.logger.Debug("useless message.", " ballot=", accepted.Ballot, " sequence=", accepted.Sequence)
-		return nil, nil
+		return nil
 	}
 	agg.add(msg.From, accepted.Ballot, accepted.Value)
 	if agg.complete() {
 		value, final := agg.safe()
 		if final {
 			delete(p.acceptedAggregates, accepted.Sequence)
-			learned := &types.LearnedValue{
+
+			p.commit(&types.LearnedValue{
 				Ballot:   accepted.Ballot,
 				Sequence: accepted.Sequence,
 				Value:    value,
-			}
-			p.log.Commit(learned)
+			})
 
-			var msgs []MessageTo
+			// start next ballot
+			// we can skip Prepare phase if coordinator log is the most recent
 			if !p.skipPrepareAllowed() {
-				start, err := p.slowBallot(p.ballot.Get() + 1)
-				if err != nil {
-					return nil, err
-				}
-				msgs = append(msgs, start...)
+				p.slowBallot(p.ballot.Get() + 1)
 			} else {
-				msgs = append(msgs, MessageTo{
+				p.send(MessageTo{
 					Message: types.NewAcceptMessage(p.ballot.Get(), p.log.Commited()+1, anyValue),
 				})
 				p.acceptedAggregates[p.log.Commited()+1] = newAggregate(p.qsize)
 			}
-
-			updates, err := p.updateReplicas()
-			if err != nil {
-				return nil, err
-			}
-
-			return append(msgs, updates...), nil
-		} else {
-			// coordinated recovery
-			if value == nil {
-				value = agg.any()
-			}
-			p.acceptedAggregates[accepted.Sequence] = newAggregate(p.qsize)
-			next := p.ballot.Get() + 1
-			p.ballot.Set(next)
-			return []MessageTo{
-				{Message: types.NewAcceptMessage(next, accepted.Sequence, value)},
-			}, nil
+			p.updateReplicas()
+			return nil
 		}
+		// coordinated recovery
+		if value == nil {
+			value = agg.any()
+		}
+		p.acceptedAggregates[accepted.Sequence] = newAggregate(p.qsize)
+		next := p.ballot.Get() + 1
+		p.ballot.Set(next)
+		p.send(MessageTo{
+			Message: types.NewAcceptMessage(next, accepted.Sequence, value),
+		})
+		return nil
 	}
-	return nil, nil
+	return nil
 }
 
-func (p *Paxos) stepLearned(msg MessageFrom) ([]MessageTo, error) {
+func (p *Paxos) stepLearned(msg MessageFrom) error {
 	learned := msg.Message.GetLearned()
-	p.log.Commit(learned.Values...)
-	return []MessageTo{
-		{
-			Message: types.NewUpdatePromiseMessage(p.ballot.Get(), p.log.Commited()),
-			To:      []uint64{msg.From},
-		},
-	}, nil
+	p.commit(learned.Values...)
+	p.send(MessageTo{
+		Message: types.NewUpdatePromiseMessage(p.ballot.Get(), p.log.Commited()),
+		To:      []uint64{msg.From},
+	})
+	return nil
 }
 
-func (p *Paxos) updateReplicas() (messages []MessageTo, err error) {
+func (p *Paxos) updateReplicas() {
 	commited := p.log.Commited()
 	for i := range p.replicas {
 		if i == p.replicaID {
 			continue
 		}
-		rcomm := p.commited.Get(i)
+		replicaCommited := p.commited.Get(i)
 		// in paxos coordinator can be elected even if his log is not the most recent
 		// in such case he will eventually catch up
-		if rcomm >= commited {
+		if replicaCommited >= commited {
 			continue
 		}
-		values := p.log.List(rcomm, commited)
-		messages = append(messages, MessageTo{Message: types.NewLearnedMessage(values...), To: []uint64{i}})
+		values := p.log.List(replicaCommited, commited)
+		p.send(MessageTo{Message: types.NewLearnedMessage(values...), To: []uint64{i}})
 	}
-	return messages, nil
 }
 
 // skipPrepareAllowed is allowed if coordinator has the most recent log among majority of the cluster.
