@@ -2,7 +2,6 @@ package consensus
 
 import (
 	"bytes"
-	"errors"
 
 	"github.com/dshulyak/rapid/consensus/types"
 	"go.uber.org/zap"
@@ -53,6 +52,8 @@ func NewPaxos(logger *zap.SugaredLogger, store Persistence, conf Config) *Paxos 
 	}
 }
 
+var _ Backend = (*Paxos)(nil)
+
 // Paxos is an implementation of fast multipaxos variant of the algorithm.
 // it is not thread safe, and meant to be wrapped with component that we will serialize
 // access to public APIs of Paxos.
@@ -88,7 +89,7 @@ type Paxos struct {
 	values []*types.LearnedValue
 }
 
-func (p *Paxos) Tick() error {
+func (p *Paxos) Tick() {
 	p.ticks++
 	if p.ticks >= p.conf.Timeout && !p.elected {
 		p.ticks = 0
@@ -110,7 +111,6 @@ func (p *Paxos) Tick() error {
 			}
 		}
 	}
-	return nil
 }
 
 func (p *Paxos) Propose(value *types.Value) error {
@@ -175,25 +175,22 @@ func (p *Paxos) send(msg MessageTo) {
 	p.messages = append(p.messages, msg)
 }
 
-func (p *Paxos) Step(msg MessageFrom) error {
+func (p *Paxos) Step(msg MessageFrom) {
 	if prepare := msg.Message.GetPrepare(); prepare != nil {
-		return p.stepPrepare(msg)
+		_ = p.stepPrepare(msg)
 	}
 	if promise := msg.Message.GetPromise(); promise != nil {
-		return p.stepPromise(msg)
+		_ = p.stepPromise(msg)
 	}
 	if accept := msg.Message.GetAccept(); accept != nil {
-		return p.stepAccept(msg)
+		_ = p.stepAccept(msg)
 	}
 	if accepted := msg.Message.GetAccepted(); accepted != nil {
-		return p.stepAccepted(msg)
+		_ = p.stepAccepted(msg)
 	}
 	if learned := msg.Message.GetLearned(); learned != nil {
-		return p.stepLearned(msg)
+		_ = p.stepLearned(msg)
 	}
-	// TODO export unknown message error
-	// can be used to blacklist replica with incompatible protocol
-	return errors.New("unknown message")
 }
 
 // TODO move to Acceptor role.
