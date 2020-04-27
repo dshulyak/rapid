@@ -136,3 +136,8 @@ func (q *queue) remove(id []byte) {
 func (q *queue) empty() bool {
 	return len(q.items) == 0
 }
+
+// replicaState keeps volatile state required for the execution of algorithm.
+type replicaState struct {
+	ticks int
+}

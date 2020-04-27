@@ -21,10 +21,11 @@ func testLogger() *zap.SugaredLogger {
 
 func defaultConfig() consensus.Config {
 	return consensus.Config{
-		Timeout:   1,
-		ReplicaID: 1,
-		Quorum:    3,
-		Replicas:  []uint64{1, 2, 3, 4},
+		Timeout:          1,
+		HeartbeatTimeout: 1,
+		ReplicaID:        1,
+		FastQuorum:       3,
+		Replicas:         []uint64{1, 2, 3, 4},
 	}
 }
 func testPaxos(store consensus.Persistence, conf consensus.Config) *consensus.Paxos {
@@ -162,4 +163,62 @@ func TestAnyAcceptMajorityOfQuorum(t *testing.T) {
 	require.Len(t, replies, 1)
 	accept := replies[0].Message.GetAccept()
 	require.Equal(t, string(first), string(accept.Value.Id))
+}
+
+func TestAcceptedMajority(t *testing.T) {
+	store := memory.New()
+	conf := defaultConfig()
+	pax := testPaxos(store, conf)
+
+	// Timeout should start a new ballot, and initialize helpers to track received promises
+	require.NoError(t, pax.Tick())
+	messages := pax.Messages()
+	require.Len(t, messages, 1)
+
+	for _, r := range conf.Replicas {
+		require.NoError(t, pax.Step(consensus.MessageFrom{
+			From:    r,
+			Message: types.NewPromiseMessage(1, 1, 0, 0, nil),
+		}))
+	}
+	messages = pax.Messages()
+	require.Len(t, messages, 1)
+
+	id := []byte("replica")
+	for _, r := range conf.Replicas {
+		require.NoError(t, pax.Step(consensus.MessageFrom{
+			From:    r,
+			Message: types.NewAcceptedMessage(1, 1, &types.Value{Id: id}),
+		}))
+	}
+	messages = pax.Messages()
+	require.Len(t, messages, 4)
+
+	accept := messages[0].Message.GetAccept()
+	require.NotNil(t, accept)
+	require.True(t, consensus.IsAny(accept.Value))
+	values := pax.Values()
+	require.Len(t, values, 1)
+	require.Equal(t, values[0].Value.Id, id)
+}
+
+func TestAcceptAsHeartbeat(t *testing.T) {
+	store := memory.New()
+	conf := defaultConfig()
+	pax := testPaxos(store, conf)
+
+	// Timeout should start a new ballot, and initialize helpers to track received promises
+	require.NoError(t, pax.Tick())
+
+	for _, r := range conf.Replicas {
+		require.NoError(t, pax.Step(consensus.MessageFrom{
+			From:    r,
+			Message: types.NewPromiseMessage(1, 1, 0, 0, nil),
+		}))
+	}
+	require.NoError(t, pax.Tick())
+
+	messages := pax.Messages()
+	require.Len(t, messages, 5)
+	// TODO check that 1 and 2 are prepare and accept, and 3-5 are accept using accept with nil value
 }

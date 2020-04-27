@@ -70,7 +70,7 @@ func (s *Store) AddLogs(_ context.Context, update []*types.LearnedValue) error {
 		return nil
 	}
 	last := update[len(update)-1].Sequence
-	if last > uint64(len(s.commited)) {
+	if last > uint64(len(s.logs)) {
 		logs := make([]*types.LearnedValue, last)
 		copy(logs, s.logs)
 		s.logs = logs
