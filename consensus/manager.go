@@ -2,14 +2,29 @@ package consensus
 
 import (
 	"context"
+	"errors"
+	"net"
 
 	"github.com/dshulyak/rapid/consensus/types"
 	"golang.org/x/sync/errgroup"
 )
 
+var (
+	// ErrNetwork raised for any issue related to network IO while sending/receiving messages.
+	ErrNetwork = errors.New("network is unreliable")
+)
+
+type Replica struct {
+	IP   net.IP
+	Port uint16
+	ID   uint64
+}
+
+type ConsumeFn func(context.Context, MessageFrom) error
+
 type Swarm interface {
 	Send(context.Context, MessageTo) error
-	Consume(context.Context, func(context.Context, MessageFrom) error) error
+	Consume(context.Context, ConsumeFn) error
 }
 
 func NewManager(cons *Consensus, swarm Swarm) *Manager {
