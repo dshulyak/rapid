@@ -1,7 +1,6 @@
 package consensus
 
 import (
-	"context"
 	"errors"
 	"fmt"
 
@@ -20,18 +19,18 @@ func checkPersist(err error) {
 }
 
 type Persistence interface {
-	GetBallot(context.Context) (uint64, error)
-	SetBallot(context.Context, uint64) error
+	GetBallot() (uint64, error)
+	SetBallot(uint64) error
 
-	AddLogs(context.Context, []*types.LearnedValue) error
-	CommitLogs(context.Context, []*types.LearnedValue) error
-	UpdateLastLogCommited(context.Context, uint64) error
-	LastLogCommited(context.Context) (uint64, error)
-	GetLog(context.Context, uint64) (*types.LearnedValue, error)
-	GetLogs(context.Context, uint64, uint64) ([]*types.LearnedValue, error)
+	AddLogs([]*types.LearnedValue) error
+	CommitLogs([]*types.LearnedValue) error
+	UpdateLastLogCommited(uint64) error
+	LastLogCommited() (uint64, error)
+	GetLog(uint64) (*types.LearnedValue, error)
+	GetLogs(uint64, uint64) ([]*types.LearnedValue, error)
 
-	UpdateCommited(context.Context, uint64, uint64) error
-	GetCommited(context.Context, uint64) (uint64, error)
+	UpdateCommited(uint64, uint64) error
+	GetCommited(uint64) (uint64, error)
 
 	BeginSession() error
 	EndSession() error

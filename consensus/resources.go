@@ -1,21 +1,15 @@
 package consensus
 
 import (
-	"context"
 	"errors"
-	"time"
 
 	"github.com/dshulyak/rapid/consensus/types"
-)
-
-var (
-	ptimeout = 3 * time.Second
 )
 
 // TODO Ballot/Log/CommitedState doesn't have to be exported
 
 func NewBallot(store Persistence) *Ballot {
-	ballot, err := store.GetBallot(context.TODO())
+	ballot, err := store.GetBallot()
 	if err != nil && errors.Is(err, ErrNotFound) {
 		checkPersist(err)
 	}
@@ -32,14 +26,12 @@ func (bal *Ballot) Get() uint64 {
 }
 
 func (bal *Ballot) Set(value uint64) {
-	ctx, cancel := context.WithTimeout(context.Background(), ptimeout)
-	defer cancel()
-	checkPersist(bal.store.SetBallot(ctx, value))
+	checkPersist(bal.store.SetBallot(value))
 	bal.value = value
 }
 
 func NewLog(store Persistence) *Log {
-	last, err := store.LastLogCommited(context.TODO())
+	last, err := store.LastLogCommited()
 	if err != nil && errors.Is(err, ErrNotFound) {
 		checkPersist(err)
 	}
@@ -56,7 +48,7 @@ func (l *Log) Add(values ...*types.LearnedValue) {
 	if len(values) == 0 {
 		return
 	}
-	checkPersist(l.store.AddLogs(context.TODO(), values))
+	checkPersist(l.store.AddLogs(values))
 }
 
 // Commit expects values to be provided in order.
@@ -64,16 +56,16 @@ func (l *Log) Commit(values ...*types.LearnedValue) {
 	if len(values) == 0 {
 		return
 	}
-	checkPersist(l.store.CommitLogs(context.TODO(), values))
+	checkPersist(l.store.CommitLogs(values))
 	last := values[len(values)-1]
 	if last.Sequence > l.last {
-		checkPersist(l.store.UpdateLastLogCommited(context.TODO(), last.Sequence))
+		checkPersist(l.store.UpdateLastLogCommited(last.Sequence))
 		l.last = last.Sequence
 	}
 }
 
 func (l *Log) Get(seq uint64) *types.LearnedValue {
-	value, err := l.store.GetLog(context.TODO(), seq)
+	value, err := l.store.GetLog(seq)
 	if errors.Is(err, ErrNotFound) {
 		return nil
 	}
@@ -82,7 +74,7 @@ func (l *Log) Get(seq uint64) *types.LearnedValue {
 }
 
 func (l *Log) List(lo, hi uint64) []*types.LearnedValue {
-	values, err := l.store.GetLogs(context.TODO(), lo, hi)
+	values, err := l.store.GetLogs(lo, hi)
 	checkPersist(err)
 	return values
 }
@@ -97,7 +89,7 @@ func NewCommitedState(store Persistence, replicas []uint64) *CommitedState {
 		values: map[uint64]uint64{},
 	}
 	for _, r := range replicas {
-		value, err := store.GetCommited(context.TODO(), r)
+		value, err := store.GetCommited(r)
 		if err != nil && !errors.Is(err, ErrNotFound) {
 			checkPersist(err)
 		}
@@ -123,5 +115,5 @@ func (cs *CommitedState) Get(replica uint64) uint64 {
 
 func (cs *CommitedState) Update(replica, seq uint64) {
 	cs.values[replica] = seq
-	checkPersist(cs.store.UpdateCommited(context.TODO(), replica, seq))
+	checkPersist(cs.store.UpdateCommited(replica, seq))
 }

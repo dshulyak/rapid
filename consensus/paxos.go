@@ -91,6 +91,7 @@ type Paxos struct {
 
 func (p *Paxos) Tick() {
 	p.ticks++
+	// if node elected it needs to renounce leadership before starting election timeout
 	if p.ticks >= p.conf.Timeout && !p.elected {
 		p.ticks = 0
 		p.slowBallot(p.ballot.Get() + 1)
@@ -126,7 +127,7 @@ func (p *Paxos) slowBallot(bal uint64) {
 	p.promiseAggregates[seq] = newAggregate(p.conf.FastQuorum)
 	p.ballot.Set(bal)
 	p.send(MessageTo{Message: types.NewPrepareMessage(bal, seq)})
-	p.logger.Debug("started slow ballot.",
+	p.logger.Debug("started election ballot.",
 		" ballot=", bal,
 		" sequence=", seq,
 	)
@@ -295,12 +296,17 @@ func (p *Paxos) stepAccept(msg MessageFrom) error {
 		return nil
 	}
 	if IsAny(value) {
-		if p.proposed.empty() {
+		learned := p.log.Get(accept.Sequence)
+		if learned != nil {
+			value = learned.Value
+		} else if p.proposed.empty() {
 			// make acceptor ready to sent accepted message
 			// as soon as new item is published to proposals queue
+			// otherwise deadlock is possible
 			return nil
+		} else {
+			value = p.proposed.pop()
 		}
-		value = p.proposed.pop()
 	}
 	p.log.Add(&types.LearnedValue{
 		Ballot:   accept.Ballot,

@@ -1,7 +1,6 @@
 package consensus_test
 
 import (
-	"context"
 	"testing"
 
 	"github.com/dshulyak/rapid/consensus"
@@ -36,7 +35,7 @@ func TestPrepareNewOnTimeout(t *testing.T) {
 	store := memory.New()
 	pax := testPaxos(store, defaultConfig())
 
-	require.NoError(t, pax.Tick())
+	pax.Tick()
 	messages := pax.Messages()
 	require.Len(t, messages, 1)
 
@@ -55,7 +54,7 @@ func TestPromiseNilForValidPrepare(t *testing.T) {
 		From:    2,
 	}
 
-	require.NoError(t, pax.Step(msg))
+	pax.Step(msg)
 	messages := pax.Messages()
 	require.Len(t, messages, 1)
 
@@ -82,9 +81,9 @@ func TestPromisePreviousPromise(t *testing.T) {
 			Value:    &types.Value{Id: []byte("not none")},
 		},
 	}
-	require.NoError(t, store.AddLogs(context.TODO(), logs))
+	require.NoError(t, store.AddLogs(logs))
 
-	require.NoError(t, pax.Step(msg))
+	pax.Step(msg)
 	messages := pax.Messages()
 	require.Len(t, messages, 1)
 
@@ -101,7 +100,7 @@ func TestAcceptAnyNilPromisesAggregated(t *testing.T) {
 	pax := testPaxos(store, conf)
 
 	// Timeout should start a new ballot, and initialize helpers to track received promises
-	require.NoError(t, pax.Tick())
+	pax.Tick()
 	messages := pax.Messages()
 	require.Len(t, messages, 1)
 
@@ -111,10 +110,10 @@ func TestAcceptAnyNilPromisesAggregated(t *testing.T) {
 	require.Equal(t, 1, int(prepare.Sequence))
 
 	for _, r := range conf.Replicas {
-		require.NoError(t, pax.Step(consensus.MessageFrom{
+		pax.Step(consensus.MessageFrom{
 			From:    r,
 			Message: types.NewPromiseMessage(1, 1, 0, 0, nil),
-		}))
+		})
 	}
 	replies := pax.Messages()
 	require.Len(t, replies, 1)
@@ -124,12 +123,12 @@ func TestAcceptAnyNilPromisesAggregated(t *testing.T) {
 
 func TestAnyAcceptMajorityOfQuorum(t *testing.T) {
 	store := memory.New()
-	require.NoError(t, store.SetBallot(context.TODO(), 1))
+	require.NoError(t, store.SetBallot(1))
 	conf := defaultConfig()
 	pax := testPaxos(store, conf)
 
 	// Timeout should start a new ballot, and initialize helpers to track received promises
-	require.NoError(t, pax.Tick())
+	pax.Tick()
 	messages := pax.Messages()
 	require.Len(t, messages, 1)
 
@@ -157,7 +156,7 @@ func TestAnyAcceptMajorityOfQuorum(t *testing.T) {
 		}
 	)
 	for _, m := range send {
-		require.NoError(t, pax.Step(m))
+		pax.Step(m)
 	}
 	replies := pax.Messages()
 	require.Len(t, replies, 1)
@@ -171,25 +170,25 @@ func TestAcceptedMajority(t *testing.T) {
 	pax := testPaxos(store, conf)
 
 	// Timeout should start a new ballot, and initialize helpers to track received promises
-	require.NoError(t, pax.Tick())
+	pax.Tick()
 	messages := pax.Messages()
 	require.Len(t, messages, 1)
 
 	for _, r := range conf.Replicas {
-		require.NoError(t, pax.Step(consensus.MessageFrom{
+		pax.Step(consensus.MessageFrom{
 			From:    r,
 			Message: types.NewPromiseMessage(1, 1, 0, 0, nil),
-		}))
+		})
 	}
 	messages = pax.Messages()
 	require.Len(t, messages, 1)
 
 	id := []byte("replica")
 	for _, r := range conf.Replicas {
-		require.NoError(t, pax.Step(consensus.MessageFrom{
+		pax.Step(consensus.MessageFrom{
 			From:    r,
 			Message: types.NewAcceptedMessage(1, 1, &types.Value{Id: id}),
-		}))
+		})
 	}
 	messages = pax.Messages()
 	require.Len(t, messages, 4)
@@ -208,15 +207,15 @@ func TestAcceptAsHeartbeat(t *testing.T) {
 	pax := testPaxos(store, conf)
 
 	// Timeout should start a new ballot, and initialize helpers to track received promises
-	require.NoError(t, pax.Tick())
+	pax.Tick()
 
 	for _, r := range conf.Replicas {
-		require.NoError(t, pax.Step(consensus.MessageFrom{
+		pax.Step(consensus.MessageFrom{
 			From:    r,
 			Message: types.NewPromiseMessage(1, 1, 0, 0, nil),
-		}))
+		})
 	}
-	require.NoError(t, pax.Tick())
+	pax.Tick()
 
 	messages := pax.Messages()
 	require.Len(t, messages, 5)
