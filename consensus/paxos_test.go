@@ -69,8 +69,7 @@ func TestPromisePreviousPromise(t *testing.T) {
 	store := memory.New()
 	pax := testPaxos(store, defaultConfig())
 
-	msg := types.NewPrepareMessage(2, 1)
-	msg.From = 2
+	msg := types.WithRouting(2, 1, types.NewPrepareMessage(2, 1))
 
 	logs := []*types.LearnedValue{
 		{
@@ -100,7 +99,7 @@ func TestAcceptAnyNilPromisesAggregated(t *testing.T) {
 	// Timeout should start a new ballot, and initialize helpers to track received promises
 	pax.Tick()
 	messages := pax.Messages()
-	require.Len(t, messages, 4)
+	require.Len(t, messages, 3)
 
 	for i := range messages {
 		prepare := messages[i].GetPrepare()
@@ -110,12 +109,11 @@ func TestAcceptAnyNilPromisesAggregated(t *testing.T) {
 	}
 
 	for _, r := range conf.Replicas {
-		msg := types.NewPromiseMessage(1, 1, 0, 0, nil)
-		msg.From = r
+		msg := types.WithRouting(r, 1, types.NewPromiseMessage(1, 1, 0, 0, nil))
 		pax.Step(msg)
 	}
 	messages = pax.Messages()
-	require.Len(t, messages, 4)
+	require.Len(t, messages, 3)
 	for i := range messages {
 		accept := messages[i].GetAccept()
 		require.True(t, consensus.IsAny(accept.Value))
@@ -129,29 +127,30 @@ func TestAnyAcceptMajorityOfQuorum(t *testing.T) {
 	pax := testPaxos(store, conf)
 
 	// Timeout should start a new ballot, and initialize helpers to track received promises
+	var (
+		first  = []byte("first")
+		second = []byte("second")
+		send   = []*types.Message{
+			types.WithRouting(2, 1, types.NewPromiseMessage(2, 1, 1, 0, &types.Value{Id: second})),
+			types.WithRouting(3, 1, types.NewPromiseMessage(2, 1, 1, 0, &types.Value{Id: first})),
+		}
+	)
+
+	require.NoError(t, store.AddLogs([]*types.LearnedValue{{Ballot: 1, Sequence: 1, Value: &types.Value{Id: first}}}))
 	pax.Tick()
 	messages := pax.Messages()
-	require.Len(t, messages, 4)
+	require.Len(t, messages, 3)
 
 	prepare := messages[0].GetPrepare()
 	require.NotNil(t, prepare)
 	require.Equal(t, 2, int(prepare.Ballot))
 	require.Equal(t, 1, int(prepare.Sequence))
 
-	var (
-		first  = []byte("first")
-		second = []byte("second")
-		send   = []*types.Message{
-			types.WithRouting(2, 0, types.NewPromiseMessage(2, 1, 1, 0, &types.Value{Id: second})),
-			types.WithRouting(3, 0, types.NewPromiseMessage(2, 1, 1, 0, &types.Value{Id: first})),
-			types.WithRouting(4, 0, types.NewPromiseMessage(2, 1, 1, 0, &types.Value{Id: first})),
-		}
-	)
 	for _, m := range send {
 		pax.Step(m)
 	}
 	messages = pax.Messages()
-	require.Len(t, messages, 4)
+	require.Len(t, messages, 3)
 	for i := range messages {
 		accept := messages[i].GetAccept()
 		require.Equal(t, string(first), string(accept.Value.Id))
@@ -166,22 +165,26 @@ func TestAcceptedMajority(t *testing.T) {
 	// Timeout should start a new ballot, and initialize helpers to track received promises
 	pax.Tick()
 	messages := pax.Messages()
-	require.Len(t, messages, 4)
+	require.Len(t, messages, 3)
 
 	for _, r := range conf.Replicas {
-		pax.Step(types.WithRouting(r, 0, types.NewPromiseMessage(1, 1, 0, 0, nil)))
+		if r != conf.ReplicaID {
+			pax.Step(types.WithRouting(r, conf.ReplicaID, types.NewPromiseMessage(1, 1, 0, 0, nil)))
+		}
 	}
 	messages = pax.Messages()
-	require.Len(t, messages, 4)
+	require.Len(t, messages, 3)
 
 	id := []byte("replica")
 	for _, r := range conf.Replicas {
-		pax.Step(types.WithRouting(r, 0, types.NewAcceptedMessage(1, 1, &types.Value{Id: id})))
+		if r != conf.ReplicaID {
+			pax.Step(types.WithRouting(r, conf.ReplicaID, types.NewAcceptedMessage(1, 1, &types.Value{Id: id})))
+		}
 	}
 	messages = pax.Messages()
-	require.Len(t, messages, 7) // 4 Accept Any + 3 Learned
+	require.Len(t, messages, 6) // 3 Accept Any + 3 Learned
 
-	for i := 0; i < 4; i++ {
+	for i := 0; i < 3; i++ {
 		accept := messages[i].GetAccept()
 		require.NotNil(t, accept)
 		require.True(t, consensus.IsAny(accept.Value))
@@ -200,15 +203,17 @@ func TestAcceptAsHeartbeat(t *testing.T) {
 	pax.Tick()
 
 	for _, r := range conf.Replicas {
-		pax.Step(types.WithRouting(
-			r,
-			0,
-			types.NewPromiseMessage(1, 1, 0, 0, nil),
-		))
+		if r != conf.ReplicaID {
+			pax.Step(types.WithRouting(
+				r,
+				conf.ReplicaID,
+				types.NewPromiseMessage(1, 1, 0, 0, nil),
+			))
+		}
 	}
 	pax.Tick()
 
 	messages := pax.Messages()
-	require.Len(t, messages, 11)
-	// TODO 4 prepare, 4 accept, 3 heartbeat excluding itself
+	require.Len(t, messages, 9)
+	// TODO 3 prepare, 3 accept, 3 heartbeat excluding itself
 }
