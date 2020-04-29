@@ -11,11 +11,7 @@ import (
 )
 
 func testLogger() *zap.SugaredLogger {
-	logger, err := zap.NewDevelopment()
-	if err != nil {
-		panic(err.Error())
-	}
-	return logger.Sugar()
+	return zap.NewNop().Sugar()
 }
 
 func defaultConfig() consensus.Config {
@@ -37,7 +33,7 @@ func TestPrepareNewOnTimeout(t *testing.T) {
 
 	pax.Tick()
 	messages := pax.Messages()
-	require.Len(t, messages, 4)
+	require.Len(t, messages, 3)
 
 	for i := range messages {
 		prepare := messages[i].GetPrepare()
@@ -49,10 +45,10 @@ func TestPrepareNewOnTimeout(t *testing.T) {
 
 func TestPromiseNilForValidPrepare(t *testing.T) {
 	store := memory.New()
-	pax := testPaxos(store, defaultConfig())
+	conf := defaultConfig()
+	pax := testPaxos(store, conf)
 
-	msg := types.NewPrepareMessage(1, 1)
-	msg.From = 2
+	msg := types.WithRouting(2, conf.ReplicaID, types.NewPrepareMessage(1, 1))
 
 	pax.Step(msg)
 	messages := pax.Messages()

@@ -70,6 +70,9 @@ type Paxos struct {
 	acceptedAggregates map[uint64]*aggregate
 	proposed           *queue
 
+	// pendingAccept is not nil if node is ready to send Accept with proposed value.
+	pendingAccept *types.Message
+
 	// persistent state
 	log    *Log
 	ballot *Ballot
@@ -105,11 +108,21 @@ func (p *Paxos) Tick() {
 	}
 }
 
-func (p *Paxos) Propose(value *types.Value) error {
-	// TODO if replica received Accept(Any) for the current ballot it should
-	// send Accepted to coordinator as soon as value is added to submitssion queue.
-	p.proposed.add(value)
-	return nil
+func (p *Paxos) Propose(value *types.Value) {
+	if p.pendingAccept != nil {
+		p.logger.Debug("accepted proposed value=", value)
+		accept := p.pendingAccept.GetAccept()
+		p.log.Add(&types.LearnedValue{
+			Ballot:   accept.Ballot,
+			Sequence: accept.Sequence,
+			Value:    value,
+		})
+		p.send(types.NewAcceptedMessage(accept.Ballot, accept.Sequence, value), p.pendingAccept.From)
+		p.pendingAccept = nil
+	} else {
+		p.logger.Debug("queued proposed value=", value)
+		p.proposed.add(value)
+	}
 }
 
 func (p *Paxos) slowBallot(bal uint64) {
@@ -135,15 +148,14 @@ func (p *Paxos) renounceLeadership() {
 
 // TODO commit must append values to p.values if they are commited in order.
 func (p *Paxos) commit(values ...*types.LearnedValue) {
+	commited := p.log.Commited()
 	for _, v := range values {
-		// TODO insert several symbols from id as hex
-		p.logger.Info("commited value",
-			" ballot=", v.Ballot,
-			" sequence=", v.Sequence,
-		)
+		p.logger.Info("commited value=", v)
+		if v.Sequence > commited {
+			p.values = append(p.values, v)
+		}
 	}
 	p.log.Commit(values...)
-	p.values = append(p.values, values...)
 }
 
 func (p *Paxos) Values() []*types.LearnedValue {
@@ -236,9 +248,6 @@ func (p *Paxos) stepPromise(msg *types.Message) error {
 		p.renounceLeadership()
 		return nil
 	}
-	if promise.Sequence == 0 {
-		return nil
-	}
 	// ignore old messages
 	if promise.Ballot < p.ballot.Get() {
 		return nil
@@ -296,20 +305,21 @@ func (p *Paxos) stepAccept(msg *types.Message) error {
 		if learned != nil {
 			value = learned.Value
 		} else if p.proposed.empty() {
-			// make acceptor ready to sent accepted message
-			// as soon as new item is published to proposals queue
-			// otherwise deadlock is possible
+			p.pendingAccept = msg
 			return nil
 		} else {
 			value = p.proposed.pop()
 		}
 	}
-	p.log.Add(&types.LearnedValue{
+	learned := &types.LearnedValue{
 		Ballot:   accept.Ballot,
 		Sequence: accept.Sequence,
 		Value:    value,
-	})
+	}
+	p.logger.Debug("accepted value=", learned)
+	p.log.Add(learned)
 	p.send(types.NewAcceptedMessage(accept.Ballot, accept.Sequence, value), msg.From)
+	p.pendingAccept = nil
 	return nil
 }
 
@@ -377,7 +387,7 @@ func (p *Paxos) stepAccepted(msg *types.Message) error {
 func (p *Paxos) stepLearned(msg *types.Message) error {
 	learned := msg.GetLearned()
 	p.commit(learned.Values...)
-	p.send(types.NewUpdatePromiseMessage(p.ballot.Get(), p.log.Commited()))
+	p.send(types.NewUpdatePromiseMessage(p.ballot.Get(), p.log.Commited()), msg.From)
 	return nil
 }
 

@@ -14,7 +14,7 @@ type Backend interface {
 	Tick()
 	Step(*types.Message)
 
-	Propose(*types.Value) error
+	Propose(*types.Value)
 
 	Messages() []*types.Message
 	Values() []*types.LearnedValue
@@ -114,6 +114,9 @@ func (c *Consensus) Run(ctx context.Context) (err error) {
 			return
 		case <-ticker.C:
 			c.backend.Tick()
+			outmsgs = append(outmsgs, c.backend.Messages()...)
+		case value := <-c.proposals:
+			c.backend.Propose(value)
 			outmsgs = append(outmsgs, c.backend.Messages()...)
 		case inmsgs := <-c.ingress:
 			for i := range inmsgs {

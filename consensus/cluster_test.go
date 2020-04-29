@@ -8,11 +8,12 @@ import (
 	"github.com/dshulyak/rapid/consensus"
 	"github.com/dshulyak/rapid/consensus/stores/memory"
 	"github.com/dshulyak/rapid/consensus/swarms/inproc"
+	"github.com/dshulyak/rapid/consensus/types"
 	"go.uber.org/zap"
 	"golang.org/x/sync/errgroup"
 )
 
-func NewCluster(n int, tick time.Duration) *Cluster {
+func NewCluster(n int, tick time.Duration, jitter int64) *Cluster {
 	logger := testLogger()
 	network := inproc.NewNetwork()
 
@@ -32,7 +33,7 @@ func NewCluster(n int, tick time.Duration) *Cluster {
 			Replicas:         replicas,
 		}
 		pax := consensus.NewPaxos(logger, store, conf)
-		tick := tick + time.Duration(rand.Int63n(500))*time.Millisecond
+		tick := tick + time.Duration(rand.Int63n(jitter))*time.Millisecond
 		cons := consensus.NewConsensus(logger.With("node", uint64(i)), pax, tick)
 		swarm := inproc.NewSwarm(logger, network, uint64(i))
 		managers[uint64(i)] = consensus.NewManager(logger.With("node", uint64(i)), cons, swarm)
@@ -80,4 +81,21 @@ func (c *Cluster) Stop() error {
 
 func (c *Cluster) Manager(id uint64) *consensus.Manager {
 	return c.managers[id]
+}
+
+func (c *Cluster) Propose(ctx context.Context, value *types.Value) error {
+	group, ctx := errgroup.WithContext(ctx)
+	for _, m := range c.managers {
+		m := m
+		group.Go(func() error {
+			return m.Propose(ctx, value)
+		})
+	}
+	return group.Wait()
+}
+
+func (c *Cluster) Subscribe(ctx context.Context, values chan<- []*types.LearnedValue) {
+	for _, m := range c.managers {
+		m.Subscribe(ctx, values)
+	}
 }
