@@ -29,8 +29,10 @@ func NewPaxos(logger *zap.SugaredLogger, store Persistence, conf Config) *Paxos 
 	for _, r := range conf.Replicas {
 		replicas[r] = &replicaState{}
 	}
+	logger = logger.Named("paxos").With("node", conf.ReplicaID)
 	return &Paxos{
 		conf:               conf,
+		mainLogger:         logger,
 		logger:             logger,
 		store:              store,
 		replicas:           replicas,
@@ -39,6 +41,7 @@ func NewPaxos(logger *zap.SugaredLogger, store Persistence, conf Config) *Paxos 
 		ballot:             NewBallot(store),
 		log:                NewLog(store),
 		commited:           NewCommitedState(store, conf.Replicas),
+		proposed:           newQueue(),
 	}
 }
 
@@ -50,8 +53,8 @@ var _ Backend = (*Paxos)(nil)
 type Paxos struct {
 	conf Config
 
-	logger *zap.SugaredLogger
-	store  Persistence
+	mainLogger, logger *zap.SugaredLogger
+	store              Persistence
 
 	elected bool
 
@@ -80,13 +83,14 @@ type Paxos struct {
 }
 
 func (p *Paxos) Tick() {
-	p.ticks++
-	// if node elected it needs to renounce leadership before starting election timeout
-	if p.ticks >= p.conf.Timeout && !p.elected {
-		p.ticks = 0
-		p.slowBallot(p.ballot.Get() + 1)
-	}
-	if p.elected {
+	if !p.elected {
+		p.ticks++
+		// if node elected it needs to renounce leadership before starting election timeout
+		if p.ticks >= p.conf.Timeout {
+			p.ticks = 0
+			p.slowBallot(p.ballot.Get() + 1)
+		}
+	} else {
 		for id, state := range p.replicas {
 			if id == p.conf.ReplicaID {
 				continue
@@ -110,14 +114,12 @@ func (p *Paxos) Propose(value *types.Value) error {
 
 func (p *Paxos) slowBallot(bal uint64) {
 	seq := p.log.Commited() + 1
-	p.renounceLeadership()
 	p.promiseAggregates[seq] = newAggregate(p.conf.FastQuorum)
-	p.ballot.Set(bal)
-	p.send(types.NewPrepareMessage(bal, seq))
 	p.logger.Debug("started election ballot.",
 		" ballot=", bal,
 		" sequence=", seq,
 	)
+	p.send(types.NewPrepareMessage(bal, seq))
 }
 
 // Messages returns staged messages and clears ingress of messages
@@ -159,11 +161,23 @@ func (p *Paxos) send(original *types.Message, recipients ...uint64) {
 		msg.From = p.conf.ReplicaID
 		msg.To = to
 		p.replicas[to].ticks = 0
+		if msg.To == p.conf.ReplicaID {
+			p.logger.Debug("sending to self=", &msg)
+			p.Step(&msg)
+			continue
+		}
+		p.logger.Debug("sending=", &msg)
 		p.messages = append(p.messages, &msg)
 	}
 }
 
 func (p *Paxos) Step(msg *types.Message) {
+	p.logger = p.mainLogger.With("ballot", p.ballot.Get())
+	if msg.To != p.conf.ReplicaID {
+		p.logger.Error("delivered to wrong node.", " message=", msg)
+		return
+	}
+	p.logger.Debug("processing=", msg.String())
 	if prepare := msg.GetPrepare(); prepare != nil {
 		_ = p.stepPrepare(msg)
 	}
@@ -186,6 +200,7 @@ func (p *Paxos) stepPrepare(msg *types.Message) error {
 	prepare := msg.GetPrepare()
 	if prepare.Ballot <= p.ballot.Get() {
 		// return only a ballot for the sender to update himself
+		p.logger.Debug("prepare with old ballot.", " current=", p.ballot.Get(), " prepare=", prepare.Ballot)
 		p.send(types.NewFailedPromiseMessage(p.ballot.Get()), msg.From)
 		return nil
 	}
@@ -216,9 +231,12 @@ func (p *Paxos) stepPrepare(msg *types.Message) error {
 func (p *Paxos) stepPromise(msg *types.Message) error {
 	promise := msg.GetPromise()
 	if promise.Ballot > p.ballot.Get() {
-		p.logger.Debug("received newer ballot in promise.", " ballot=", promise.Ballot, " from=", msg.From)
+		p.logger.Debug("received newer ballot in promise=", msg)
 		p.ballot.Set(promise.Ballot)
 		p.renounceLeadership()
+		return nil
+	}
+	if promise.Sequence == 0 {
 		return nil
 	}
 	// ignore old messages
@@ -230,12 +248,13 @@ func (p *Paxos) stepPromise(msg *types.Message) error {
 
 	agg, exist := p.promiseAggregates[promise.Sequence]
 	if !exist {
-		p.logger.Debug("ignored promise.", " ballot=", promise.Ballot, " sequence=", promise.Sequence)
+		p.logger.Debug("ignored promise=", msg)
 		return nil
 	}
 
 	agg.add(msg.From, promise.Ballot, promise.Value)
 	if agg.complete() {
+		p.logger.Info("node is elected")
 		p.elected = true
 		delete(p.promiseAggregates, promise.Sequence)
 		p.acceptedAggregates[promise.Sequence] = newAggregate(p.conf.FastQuorum)

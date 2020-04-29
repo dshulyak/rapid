@@ -3,14 +3,17 @@ package inproc
 import (
 	"context"
 	"errors"
+	"fmt"
 	"sync"
 
 	"github.com/dshulyak/rapid/consensus"
 	"github.com/dshulyak/rapid/consensus/types"
+	"go.uber.org/zap"
 )
 
-func NewSwarm(network *Network, id uint64) *Swarm {
+func NewSwarm(logger *zap.SugaredLogger, network *Network, id uint64) *Swarm {
 	return &Swarm{
+		logger:  logger.Named("swarm").With("node", id),
 		id:      id,
 		network: network,
 	}
@@ -19,15 +22,20 @@ func NewSwarm(network *Network, id uint64) *Swarm {
 var _ consensus.Swarm = (*Swarm)(nil)
 
 type Swarm struct {
+	logger  *zap.SugaredLogger
 	id      uint64
 	network *Network
 }
 
 func (s *Swarm) Send(ctx context.Context, msg *types.Message) error {
+	if msg.From == msg.To {
+		return fmt.Errorf("sending message to the same node not supported %d", msg.From)
+	}
 	p, err := s.network.connect(s.id, msg.To)
 	if err != nil {
 		return err
 	}
+	s.logger.Debug("send=", msg)
 	if err := p.send(ctx, msg); err != nil {
 		return err
 	}
@@ -35,7 +43,11 @@ func (s *Swarm) Send(ctx context.Context, msg *types.Message) error {
 }
 
 func (s *Swarm) Consume(ctx context.Context, fn consensus.ConsumeFn) error {
-	s.network.register(s.id, fn)
+	s.logger.Debug("register messages consumer")
+	s.network.register(s.id, func(ctx context.Context, msg *types.Message) error {
+		s.logger.Debug("received=", msg)
+		return fn(ctx, msg)
+	})
 	<-ctx.Done()
 	return ctx.Err()
 }
@@ -108,7 +120,7 @@ func (n *Network) connect(from, to uint64) (*pipe, error) {
 
 	remote, exist := n.consumers[to]
 	if !exist {
-		return nil, errors.New("remove consumer is not ready")
+		return nil, errors.New("remote consumer is not ready")
 	}
 
 	if n.enabled(from, to) {
@@ -116,19 +128,21 @@ func (n *Network) connect(from, to uint64) (*pipe, error) {
 	}
 	_ = n.enabled(to, from)
 
+	topipe := n.pipes[from][to]
 	n.wg.Add(1)
 	go func() {
 		defer n.wg.Done()
-		n.pipes[from][to].run(local)
+		topipe.run(remote)
 		n.mu.Lock()
 		defer n.mu.Unlock()
 		delete(n.pipes[from], to)
 	}()
 
+	frompipe := n.pipes[to][from]
 	n.wg.Add(1)
 	go func() {
-		n.wg.Done()
-		n.pipes[to][from].run(remote)
+		defer n.wg.Done()
+		frompipe.run(local)
 		n.mu.Lock()
 		defer n.mu.Unlock()
 		delete(n.pipes[to], from)

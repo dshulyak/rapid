@@ -3,9 +3,10 @@ package consensus
 import (
 	"context"
 	"errors"
-	"net"
+	"sync"
 
 	"github.com/dshulyak/rapid/consensus/types"
+	"go.uber.org/zap"
 	"golang.org/x/sync/errgroup"
 )
 
@@ -14,12 +15,6 @@ var (
 	ErrNetwork = errors.New("network is unreliable")
 )
 
-type Replica struct {
-	IP   net.IP
-	Port uint16
-	ID   uint64
-}
-
 type ConsumeFn func(context.Context, *types.Message) error
 
 type Swarm interface {
@@ -27,18 +22,23 @@ type Swarm interface {
 	Consume(context.Context, ConsumeFn) error
 }
 
-func NewManager(cons *Consensus, swarm Swarm) *Manager {
+func NewManager(logger *zap.SugaredLogger, cons *Consensus, swarm Swarm) *Manager {
 	return &Manager{
+		logger:    logger.Named("manager"),
 		consensus: cons,
 		swarm:     swarm,
+		bus:       newBus(),
 	}
 }
 
 // Manager stitches all subcomponents together (swarm, consensus) and provides simplified API
 // to consume consensus subsystem.
 type Manager struct {
+	logger    *zap.SugaredLogger
 	consensus *Consensus
 	swarm     Swarm
+
+	bus *valuesBus
 }
 
 func (m *Manager) Run(ctx context.Context) error {
@@ -53,7 +53,9 @@ func (m *Manager) Run(ctx context.Context) error {
 				return ctx.Err()
 			case msgs := <-m.consensus.Messages():
 				for i := range msgs {
-					m.swarm.Send(ctx, msgs[i])
+					if err := m.swarm.Send(ctx, msgs[i]); err != nil {
+						m.logger.Warn("failed to send. ", err)
+					}
 				}
 			}
 		}
@@ -70,7 +72,8 @@ func (m *Manager) Run(ctx context.Context) error {
 			select {
 			case <-ctx.Done():
 				return ctx.Err()
-			case <-m.consensus.Learned():
+			case vals := <-m.consensus.Learned():
+				m.bus.send(ctx, vals)
 			}
 		}
 	})
@@ -83,4 +86,46 @@ func (m *Manager) Propose(ctx context.Context, value *types.Value) error {
 
 // TODO subsriber should be able to specify first non-applied value, and manager should fetch
 // all available values from persistent store and send to subscriber.
-func (m *Manager) Subscribe(ctx context.Context, values chan<- []*types.LearnedValue) {}
+func (m *Manager) Subscribe(ctx context.Context, values chan<- []*types.LearnedValue) {
+	m.bus.subscribe(ctx, values)
+}
+
+type sub struct {
+	ctx    context.Context
+	values chan<- []*types.LearnedValue
+}
+
+func newBus() *valuesBus {
+	return &valuesBus{
+		subs: map[int]*sub{},
+	}
+}
+
+type valuesBus struct {
+	mu   sync.RWMutex
+	subs map[int]*sub
+	last int
+}
+
+func (bus *valuesBus) subscribe(ctx context.Context, values chan<- []*types.LearnedValue) {
+	bus.mu.Lock()
+	defer bus.mu.Unlock()
+	bus.subs[bus.last] = &sub{
+		ctx:    ctx,
+		values: values,
+	}
+	bus.last++
+}
+
+func (bus *valuesBus) send(ctx context.Context, vals []*types.LearnedValue) {
+	bus.mu.Lock()
+	defer bus.mu.Unlock()
+	for i, sub := range bus.subs {
+		select {
+		case <-ctx.Done():
+		case <-sub.ctx.Done():
+			delete(bus.subs, i)
+		case sub.values <- vals:
+		}
+	}
+}

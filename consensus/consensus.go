@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/dshulyak/rapid/consensus/types"
+	"go.uber.org/zap"
 )
 
 type Backend interface {
@@ -19,8 +20,9 @@ type Backend interface {
 	Values() []*types.LearnedValue
 }
 
-func NewConsensus(backend Backend, tick time.Duration) *Consensus {
+func NewConsensus(logger *zap.SugaredLogger, backend Backend, tick time.Duration) *Consensus {
 	return &Consensus{
+		logger:    logger.Named("consensus"),
 		backend:   backend,
 		tick:      tick,
 		proposals: make(chan *types.Value, 1),
@@ -32,7 +34,8 @@ func NewConsensus(backend Backend, tick time.Duration) *Consensus {
 
 // Consensus is thread-safe implementation of the consensus node.
 type Consensus struct {
-	tick time.Duration
+	logger *zap.SugaredLogger
+	tick   time.Duration
 
 	backend Backend
 
@@ -81,6 +84,7 @@ func (c *Consensus) Run(ctx context.Context) (err error) {
 	defer func() {
 		if err := recover(); err != nil {
 			err = fmt.Errorf("irrecoverable error: %v", err)
+			c.logger.Error("exiting with error=", err)
 		}
 	}()
 	var (
@@ -92,6 +96,7 @@ func (c *Consensus) Run(ctx context.Context) (err error) {
 	)
 	defer ticker.Stop()
 
+	c.logger.Info("starting consensus with ticker period=", c.tick)
 	for {
 		if len(outmsgs) > 0 {
 			egress = c.egress
