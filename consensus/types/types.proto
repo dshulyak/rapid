@@ -8,6 +8,9 @@ message Message {
     Accepted accepted = 4;
     Learned learned = 5;
   }
+
+  uint64 from = 6;
+  uint64 to = 7;
 }
 
 message Prepare {

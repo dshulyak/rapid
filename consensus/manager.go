@@ -20,10 +20,10 @@ type Replica struct {
 	ID   uint64
 }
 
-type ConsumeFn func(context.Context, MessageFrom) error
+type ConsumeFn func(context.Context, *types.Message) error
 
 type Swarm interface {
-	Send(context.Context, MessageTo) error
+	Send(context.Context, *types.Message) error
 	Consume(context.Context, ConsumeFn) error
 }
 
@@ -59,9 +59,9 @@ func (m *Manager) Run(ctx context.Context) error {
 		}
 	})
 	group.Go(func() error {
-		return m.swarm.Consume(ctx, func(_ context.Context, msg MessageFrom) error {
+		return m.swarm.Consume(ctx, func(_ context.Context, msg *types.Message) error {
 			// if context is nil and queue is full message will be dropped
-			m.consensus.Receive(nil, []MessageFrom{msg})
+			m.consensus.Receive(nil, []*types.Message{msg})
 			return nil
 		})
 	})

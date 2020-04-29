@@ -11,11 +11,11 @@ import (
 
 type Backend interface {
 	Tick()
-	Step(MessageFrom)
+	Step(*types.Message)
 
 	Propose(*types.Value) error
 
-	Messages() []MessageTo
+	Messages() []*types.Message
 	Values() []*types.LearnedValue
 }
 
@@ -24,8 +24,8 @@ func NewConsensus(backend Backend, tick time.Duration) *Consensus {
 		backend:   backend,
 		tick:      tick,
 		proposals: make(chan *types.Value, 1),
-		ingress:   make(chan []MessageFrom, 100), // this is used as a fifo queue, overflow messages will be dropped with error
-		egress:    make(chan []MessageTo, 1),
+		ingress:   make(chan []*types.Message, 100), // this is used as a fifo queue, overflow messages will be dropped with error
+		egress:    make(chan []*types.Message, 1),
 		values:    make(chan []*types.LearnedValue, 1),
 	}
 }
@@ -38,13 +38,13 @@ type Consensus struct {
 
 	proposals chan *types.Value
 
-	ingress chan []MessageFrom
-	egress  chan []MessageTo
+	ingress chan []*types.Message
+	egress  chan []*types.Message
 
 	values chan []*types.LearnedValue
 }
 
-func (c *Consensus) Receive(ctx context.Context, msgs []MessageFrom) error {
+func (c *Consensus) Receive(ctx context.Context, msgs []*types.Message) error {
 	if ctx != nil {
 		select {
 		case c.ingress <- msgs:
@@ -73,7 +73,7 @@ func (c *Consensus) Learned() <-chan []*types.LearnedValue {
 	return c.values
 }
 
-func (c *Consensus) Messages() <-chan []MessageTo {
+func (c *Consensus) Messages() <-chan []*types.Message {
 	return c.egress
 }
 
@@ -84,8 +84,8 @@ func (c *Consensus) Run(ctx context.Context) (err error) {
 		}
 	}()
 	var (
-		outmsgs []MessageTo
-		egress  chan []MessageTo
+		outmsgs []*types.Message
+		egress  chan []*types.Message
 		ticker  = time.NewTicker(c.tick)
 		values  []*types.LearnedValue
 		valchan chan []*types.LearnedValue

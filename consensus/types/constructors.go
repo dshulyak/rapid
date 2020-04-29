@@ -1,5 +1,12 @@
 package types
 
+// WithRouting mutates original msg objects, by adding passed from, to fields to the object.
+func WithRouting(from, to uint64, msg *Message) *Message {
+	msg.From = from
+	msg.To = to
+	return msg
+}
+
 func NewPrepareMessage(ballot, seq uint64) *Message {
 	return &Message{
 		Type: &Message_Prepare{

@@ -9,38 +9,27 @@ import (
 	"github.com/dshulyak/rapid/consensus/types"
 )
 
-func NewSwarm(network *Network, id uint64, replicas []uint64) *Swarm {
+func NewSwarm(network *Network, id uint64) *Swarm {
 	return &Swarm{
-		id:       id,
-		replicas: replicas,
-		network:  network,
+		id:      id,
+		network: network,
 	}
 }
 
-type Swarm struct {
-	id       uint64
-	replicas []uint64
+var _ consensus.Swarm = (*Swarm)(nil)
 
+type Swarm struct {
+	id      uint64
 	network *Network
 }
 
-func (s *Swarm) Send(ctx context.Context, msg consensus.MessageTo) error {
-	// msg.To nil is broadcast
-	to := msg.To
-	if to == nil {
-		to = s.replicas
+func (s *Swarm) Send(ctx context.Context, msg *types.Message) error {
+	p, err := s.network.connect(s.id, msg.To)
+	if err != nil {
+		return err
 	}
-	for _, id := range to {
-		if id == s.id {
-			continue
-		}
-		p, err := s.network.connect(s.id, id)
-		if err != nil {
-			return err
-		}
-		if err := p.send(ctx, msg.Message); err != nil {
-			return err
-		}
+	if err := p.send(ctx, msg); err != nil {
+		return err
 	}
 	return nil
 }
@@ -83,7 +72,7 @@ func (p *pipe) run(fn consensus.ConsumeFn) {
 		case <-p.ctx.Done():
 			return
 		case msg := <-p.messages:
-			_ = fn(context.Background(), consensus.MessageFrom{From: p.from, Message: msg})
+			_ = fn(context.Background(), msg)
 		}
 	}
 }

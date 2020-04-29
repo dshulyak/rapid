@@ -1,5 +1,7 @@
 package consensus
 
+import "github.com/dshulyak/rapid/consensus/types"
+
 var _ Backend = (*SelfBroadcast)(nil)
 
 func WithSelfBroadcast(conf Config, backend Backend) *SelfBroadcast {
@@ -16,20 +18,17 @@ type SelfBroadcast struct {
 	conf Config
 }
 
-func (sr *SelfBroadcast) Messages() (rst []MessageTo) {
+func (sr *SelfBroadcast) Messages() (rst []*types.Message) {
 	msgs := sr.Backend.Messages()
 	rst = append(rst, msgs...)
-	for msgs != nil {
-		for _, msg := range msgs {
-			if len(msg.To) == 0 {
-				sr.Backend.Step(MessageFrom{
-					From:    sr.conf.ReplicaID,
-					Message: msg.Message,
-				})
-			}
+
+	for _, msg := range msgs {
+		if msg.To == sr.conf.ReplicaID {
+			sr.Backend.Step(msg)
 		}
-		msgs = sr.Backend.Messages()
-		rst = append(rst, msgs...)
 	}
+	msgs = sr.Backend.Messages()
+	rst = append(rst, msgs...)
+
 	return rst
 }
