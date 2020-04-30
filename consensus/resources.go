@@ -8,7 +8,7 @@ import (
 
 // TODO Ballot/Log/CommitedState doesn't have to be exported
 
-func NewBallot(store Persistence) *Ballot {
+func NewBallot(store Store) *Ballot {
 	ballot, err := store.GetBallot()
 	if err != nil && errors.Is(err, ErrNotFound) {
 		checkPersist(err)
@@ -17,8 +17,13 @@ func NewBallot(store Persistence) *Ballot {
 }
 
 type Ballot struct {
-	store Persistence
+	store Store
 	value uint64
+}
+
+func (bal *Ballot) WithStore(store Store) *Ballot {
+	bal.store = store
+	return bal
 }
 
 func (bal *Ballot) Get() uint64 {
@@ -30,7 +35,7 @@ func (bal *Ballot) Set(value uint64) {
 	bal.value = value
 }
 
-func NewLog(store Persistence) *Log {
+func NewLog(store Store) *Log {
 	last, err := store.LastLogCommited()
 	if err != nil && errors.Is(err, ErrNotFound) {
 		checkPersist(err)
@@ -39,8 +44,13 @@ func NewLog(store Persistence) *Log {
 }
 
 type Log struct {
-	store Persistence
+	store Store
 	last  uint64
+}
+
+func (l *Log) WithStore(store Store) *Log {
+	l.store = store
+	return l
 }
 
 // Add expects values to be provided in order.
@@ -83,7 +93,7 @@ func (l *Log) Commited() uint64 {
 	return l.last
 }
 
-func NewCommitedState(store Persistence, replicas []uint64) *CommitedState {
+func NewCommitedState(store Store, replicas []uint64) *CommitedState {
 	state := &CommitedState{
 		store:  store,
 		values: map[uint64]uint64{},
@@ -101,8 +111,13 @@ func NewCommitedState(store Persistence, replicas []uint64) *CommitedState {
 // CommitedState maintained by the coordinator for each replica.
 // It is coordinators reponsibility to share learned values.
 type CommitedState struct {
-	store  Persistence
+	store  Store
 	values map[uint64]uint64
+}
+
+func (cs *CommitedState) WithStore(store Store) *CommitedState {
+	cs.store = store
+	return cs
 }
 
 func (cs *CommitedState) Get(replica uint64) uint64 {

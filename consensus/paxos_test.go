@@ -23,7 +23,7 @@ func defaultConfig() consensus.Config {
 		Replicas:         []uint64{1, 2, 3, 4},
 	}
 }
-func testPaxos(store consensus.Persistence, conf consensus.Config) *consensus.Paxos {
+func testPaxos(store consensus.TransactionalStore, conf consensus.Config) *consensus.Paxos {
 	return consensus.NewPaxos(testLogger(), store, conf)
 }
 

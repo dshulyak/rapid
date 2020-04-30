@@ -8,7 +8,7 @@ import (
 )
 
 var (
-	_ consensus.Persistence = (*Store)(nil)
+	_ consensus.TransactionalStore = (*Store)(nil)
 )
 
 func New() *Store {
@@ -25,11 +25,11 @@ type Store struct {
 	logs []*types.LearnedValue
 }
 
-func (s *Store) BeginSession() error {
-	return nil
+func (s *Store) StartSession() (consensus.StoreSession, error) {
+	return s, nil
 }
 
-func (s *Store) EndSession() error {
+func (s *Store) End() error {
 	return nil
 }
 

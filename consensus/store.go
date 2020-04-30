@@ -18,7 +18,17 @@ func checkPersist(err error) {
 	}
 }
 
-type Persistence interface {
+type StoreSession interface {
+	Store
+	End() error
+}
+
+type TransactionalStore interface {
+	Store
+	StartSession() (StoreSession, error)
+}
+
+type Store interface {
 	GetBallot() (uint64, error)
 	SetBallot(uint64) error
 
@@ -31,7 +41,4 @@ type Persistence interface {
 
 	UpdateCommited(uint64, uint64) error
 	GetCommited(uint64) (uint64, error)
-
-	BeginSession() error
-	EndSession() error
 }

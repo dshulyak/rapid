@@ -24,7 +24,7 @@ type Config struct {
 	Replicas                  []uint64
 }
 
-func NewPaxos(logger *zap.SugaredLogger, store Persistence, conf Config) *Paxos {
+func NewPaxos(logger *zap.SugaredLogger, store TransactionalStore, conf Config) *Paxos {
 	replicas := map[uint64]*replicaState{}
 	for _, r := range conf.Replicas {
 		replicas[r] = &replicaState{}
@@ -54,7 +54,7 @@ type Paxos struct {
 	conf Config
 
 	mainLogger, logger *zap.SugaredLogger
-	store              Persistence
+	store              TransactionalStore
 
 	elected bool
 
@@ -86,6 +86,7 @@ type Paxos struct {
 }
 
 func (p *Paxos) Tick() {
+	defer p.withSession()()
 	if !p.elected {
 		p.ticks++
 		// if node elected it needs to renounce leadership before starting election timeout
@@ -109,6 +110,7 @@ func (p *Paxos) Tick() {
 }
 
 func (p *Paxos) Propose(value *types.Value) {
+	defer p.withSession()()
 	if p.pendingAccept != nil {
 		p.logger.Debug("accepted proposed value=", value)
 		accept := p.pendingAccept.GetAccept()
@@ -140,6 +142,17 @@ func (p *Paxos) Messages() []*types.Message {
 	msgs := p.messages
 	p.messages = nil
 	return msgs
+}
+
+func (p *Paxos) withSession() func() {
+	session, err := p.store.StartSession()
+	checkPersist(err)
+	p.ballot = p.ballot.WithStore(session)
+	p.log = p.log.WithStore(session)
+	p.commited.WithStore(session)
+	return func() {
+		checkPersist(session.End())
+	}
 }
 
 func (p *Paxos) renounceLeadership() {
@@ -184,6 +197,7 @@ func (p *Paxos) send(original *types.Message, recipients ...uint64) {
 }
 
 func (p *Paxos) Step(msg *types.Message) {
+	defer p.withSession()()
 	p.logger = p.mainLogger.With("ballot", p.ballot.Get())
 	if msg.To != p.conf.ReplicaID {
 		p.logger.Error("delivered to wrong node.", " message=", msg)
