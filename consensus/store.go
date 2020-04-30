@@ -32,12 +32,10 @@ type Store interface {
 	GetBallot() (uint64, error)
 	SetBallot(uint64) error
 
-	AddLogs([]*types.LearnedValue) error
-	CommitLogs([]*types.LearnedValue) error
-	UpdateLastLogCommited(uint64) error
-	LastLogCommited() (uint64, error)
-	GetLog(uint64) (*types.LearnedValue, error)
-	GetLogs(uint64, uint64) ([]*types.LearnedValue, error)
+	AddValues(...*types.LearnedValue) error
+	CommitValue(*types.LearnedValue) error
+	CommitedSequence() (uint64, error)
+	GetValue(uint64) (*types.LearnedValue, error)
 
 	UpdateCommited(uint64, uint64) error
 	GetCommited(uint64) (uint64, error)

@@ -14,6 +14,7 @@ var (
 func New() *Store {
 	return &Store{
 		commited: map[uint64]uint64{},
+		values:   map[uint64]*types.LearnedValue{},
 	}
 }
 
@@ -21,8 +22,8 @@ type Store struct {
 	ballot   uint64
 	commited map[uint64]uint64
 
-	last uint64
-	logs []*types.LearnedValue
+	last   uint64
+	values map[uint64]*types.LearnedValue
 }
 
 func (s *Store) StartSession() (consensus.StoreSession, error) {
@@ -55,48 +56,35 @@ func (s *Store) GetCommited(replica uint64) (uint64, error) {
 	return val, nil
 }
 
-func (s *Store) UpdateLastLogCommited(value uint64) error {
-	s.last = value
-	return nil
-}
-
-func (s *Store) LastLogCommited() (uint64, error) {
+func (s *Store) CommitedSequence() (uint64, error) {
 	return s.last, nil
 }
 
-func (s *Store) AddLogs(update []*types.LearnedValue) error {
+func (s *Store) AddValues(update ...*types.LearnedValue) error {
 	if len(update) == 0 {
 		return nil
 	}
-	last := update[len(update)-1].Sequence
-	if last > uint64(len(s.logs)) {
-		logs := make([]*types.LearnedValue, last)
-		copy(logs, s.logs)
-		s.logs = logs
-	}
-	for _, log := range update {
-		s.logs[int(log.Sequence)-1] = log
+	for _, value := range update {
+		s.values[value.Sequence] = value
 	}
 	return nil
 }
 
 // TODO need a distiction between pending logs and commited logs
-func (s *Store) CommitLogs(update []*types.LearnedValue) error {
-	return s.AddLogs(update)
+func (s *Store) CommitValue(value *types.LearnedValue) error {
+	if value.Sequence <= s.last {
+		return nil
+	}
+	if err := s.AddValues(value); err != nil {
+		return err
+	}
+	s.last = value.Sequence
+	return nil
 }
 
-func (s *Store) GetLog(seq uint64) (*types.LearnedValue, error) {
-	if uint64(len(s.logs)) < seq {
+func (s *Store) GetValue(seq uint64) (*types.LearnedValue, error) {
+	if _, exist := s.values[seq]; !exist {
 		return nil, fmt.Errorf("%w: can't find value with seq %d", consensus.ErrNotFound, seq)
 	}
-	return s.logs[int(seq)-1], nil
-}
-
-func (s *Store) GetLogs(lo, hi uint64) ([]*types.LearnedValue, error) {
-	if uint64(len(s.logs)) < hi {
-		return nil, fmt.Errorf("%w: can't find value with seq %d", consensus.ErrNotFound, hi)
-	}
-	logs := make([]*types.LearnedValue, hi-lo)
-	copy(logs, s.logs[lo:hi])
-	return logs, nil
+	return s.values[seq], nil
 }

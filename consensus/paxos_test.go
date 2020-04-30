@@ -74,7 +74,7 @@ func TestPromisePreviousPromise(t *testing.T) {
 			Value:    &types.Value{Id: []byte("not none")},
 		},
 	}
-	require.NoError(t, store.AddLogs(logs))
+	require.NoError(t, store.AddValues(logs...))
 
 	pax.Step(msg)
 	messages := pax.Messages()
@@ -132,7 +132,7 @@ func TestAnyAcceptMajorityOfQuorum(t *testing.T) {
 		}
 	)
 
-	require.NoError(t, store.AddLogs([]*types.LearnedValue{{Ballot: 1, Sequence: 1, Value: &types.Value{Id: first}}}))
+	require.NoError(t, store.AddValues(&types.LearnedValue{Ballot: 1, Sequence: 1, Value: &types.Value{Id: first}}))
 	pax.Tick()
 	messages := pax.Messages()
 	require.Len(t, messages, 3)

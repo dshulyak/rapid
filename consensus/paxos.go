@@ -167,8 +167,8 @@ func (p *Paxos) commit(values ...*types.LearnedValue) {
 		if v.Sequence > commited {
 			p.values = append(p.values, v)
 		}
+		p.log.Commit(v)
 	}
-	p.log.Commit(values...)
 }
 
 func (p *Paxos) Values() []*types.LearnedValue {
@@ -228,6 +228,11 @@ func (p *Paxos) stepPrepare(msg *types.Message) error {
 		// return only a ballot for the sender to update himself
 		p.logger.Debug("prepare with old ballot.", " current=", p.ballot.Get(), " prepare=", prepare.Ballot)
 		p.send(types.NewFailedPromiseMessage(p.ballot.Get()), msg.From)
+		return nil
+	}
+	if prepare.Sequence < p.log.Commited() {
+		// update peer with last known commited value
+		p.send(types.NewLearnedMessage(p.log.Get(p.log.Commited())), msg.From)
 		return nil
 	}
 	p.ticks = 0
@@ -307,6 +312,12 @@ func (p *Paxos) stepAccept(msg *types.Message) error {
 		p.send(types.NewFailedPromiseMessage(p.ballot.Get()), msg.From)
 		return nil
 	}
+	if accept.Sequence < p.log.Commited() {
+		// update peer with last known commited value
+		p.send(types.NewLearnedMessage(p.log.Get(p.log.Commited())), msg.From)
+		return nil
+	}
+
 	p.ballot.Set(accept.Ballot)
 	p.ticks = 0
 	value := accept.Value
@@ -417,8 +428,7 @@ func (p *Paxos) updateReplicas() {
 		if replicaCommited >= commited {
 			continue
 		}
-		values := p.log.List(replicaCommited, commited)
-		p.send(types.NewLearnedMessage(values...), i)
+		p.send(types.NewLearnedMessage(p.log.Get(commited)), i)
 	}
 }
 

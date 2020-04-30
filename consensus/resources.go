@@ -35,8 +35,10 @@ func (bal *Ballot) Set(value uint64) {
 	bal.value = value
 }
 
+// TODO rename from Log to something more appropriate
+// Application doesn't need to store log of values, it is enough to ensure that last agreed value is replicated.
 func NewLog(store Store) *Log {
-	last, err := store.LastLogCommited()
+	last, err := store.CommitedSequence()
 	if err != nil && errors.Is(err, ErrNotFound) {
 		checkPersist(err)
 	}
@@ -58,35 +60,25 @@ func (l *Log) Add(values ...*types.LearnedValue) {
 	if len(values) == 0 {
 		return
 	}
-	checkPersist(l.store.AddLogs(values))
+	checkPersist(l.store.AddValues(values...))
 }
 
 // Commit expects values to be provided in order.
-func (l *Log) Commit(values ...*types.LearnedValue) {
-	if len(values) == 0 {
+func (l *Log) Commit(value *types.LearnedValue) {
+	if value.Sequence <= l.last {
 		return
 	}
-	checkPersist(l.store.CommitLogs(values))
-	last := values[len(values)-1]
-	if last.Sequence > l.last {
-		checkPersist(l.store.UpdateLastLogCommited(last.Sequence))
-		l.last = last.Sequence
-	}
+	checkPersist(l.store.CommitValue(value))
+	l.last = value.Sequence
 }
 
 func (l *Log) Get(seq uint64) *types.LearnedValue {
-	value, err := l.store.GetLog(seq)
+	value, err := l.store.GetValue(seq)
 	if errors.Is(err, ErrNotFound) {
 		return nil
 	}
 	checkPersist(err)
 	return value
-}
-
-func (l *Log) List(lo, hi uint64) []*types.LearnedValue {
-	values, err := l.store.GetLogs(lo, hi)
-	checkPersist(err)
-	return values
 }
 
 func (l *Log) Commited() uint64 {
