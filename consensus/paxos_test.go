@@ -4,7 +4,6 @@ import (
 	"testing"
 
 	"github.com/dshulyak/rapid/consensus"
-	"github.com/dshulyak/rapid/consensus/stores/memory"
 	"github.com/dshulyak/rapid/consensus/types"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/zap"
@@ -19,17 +18,17 @@ func defaultConfig() consensus.Config {
 		Timeout:          1,
 		HeartbeatTimeout: 1,
 		ReplicaID:        1,
+		ClassicQuorum:    3,
 		FastQuorum:       3,
 		Replicas:         []uint64{1, 2, 3, 4},
 	}
 }
-func testPaxos(store consensus.TransactionalStore, conf consensus.Config) *consensus.Paxos {
-	return consensus.NewPaxos(testLogger(), store, conf)
+func testPaxos(conf consensus.Config) *consensus.Paxos {
+	return consensus.NewPaxos(testLogger(), conf)
 }
 
 func TestPrepareNewOnTimeout(t *testing.T) {
-	store := memory.New()
-	pax := testPaxos(store, defaultConfig())
+	pax := testPaxos(defaultConfig())
 
 	pax.Tick()
 	messages := pax.Messages()
@@ -44,9 +43,8 @@ func TestPrepareNewOnTimeout(t *testing.T) {
 }
 
 func TestPromiseNilForValidPrepare(t *testing.T) {
-	store := memory.New()
 	conf := defaultConfig()
-	pax := testPaxos(store, conf)
+	pax := testPaxos(conf)
 
 	msg := types.WithRouting(2, conf.ReplicaID, types.NewPrepareMessage(1, 1))
 
@@ -61,36 +59,9 @@ func TestPromiseNilForValidPrepare(t *testing.T) {
 	require.Empty(t, promise.VoteBallot)
 }
 
-func TestPromisePreviousPromise(t *testing.T) {
-	store := memory.New()
-	pax := testPaxos(store, defaultConfig())
-
-	msg := types.WithRouting(2, 1, types.NewPrepareMessage(2, 1))
-
-	logs := []*types.LearnedValue{
-		{
-			Ballot:   1,
-			Sequence: 1,
-			Value:    &types.Value{Id: []byte("not none")},
-		},
-	}
-	require.NoError(t, store.AddValues(logs...))
-
-	pax.Step(msg)
-	messages := pax.Messages()
-	require.Len(t, messages, 1)
-
-	promise := messages[0].GetPromise()
-	require.NotNil(t, promise)
-	require.NotNil(t, promise.Value)
-	require.Empty(t, promise.CommitedSequence)
-	require.Equal(t, logs[0].Ballot, promise.VoteBallot)
-}
-
 func TestAcceptAnyNilPromisesAggregated(t *testing.T) {
-	store := memory.New()
 	conf := defaultConfig()
-	pax := testPaxos(store, conf)
+	pax := testPaxos(conf)
 
 	// Timeout should start a new ballot, and initialize helpers to track received promises
 	pax.Tick()
@@ -116,47 +87,9 @@ func TestAcceptAnyNilPromisesAggregated(t *testing.T) {
 	}
 }
 
-func TestAnyAcceptMajorityOfQuorum(t *testing.T) {
-	store := memory.New()
-	require.NoError(t, store.SetBallot(1))
-	conf := defaultConfig()
-	pax := testPaxos(store, conf)
-
-	// Timeout should start a new ballot, and initialize helpers to track received promises
-	var (
-		first  = []byte("first")
-		second = []byte("second")
-		send   = []*types.Message{
-			types.WithRouting(2, 1, types.NewPromiseMessage(2, 1, 1, 0, &types.Value{Id: second})),
-			types.WithRouting(3, 1, types.NewPromiseMessage(2, 1, 1, 0, &types.Value{Id: first})),
-		}
-	)
-
-	require.NoError(t, store.AddValues(&types.LearnedValue{Ballot: 1, Sequence: 1, Value: &types.Value{Id: first}}))
-	pax.Tick()
-	messages := pax.Messages()
-	require.Len(t, messages, 3)
-
-	prepare := messages[0].GetPrepare()
-	require.NotNil(t, prepare)
-	require.Equal(t, 2, int(prepare.Ballot))
-	require.Equal(t, 1, int(prepare.Sequence))
-
-	for _, m := range send {
-		pax.Step(m)
-	}
-	messages = pax.Messages()
-	require.Len(t, messages, 3)
-	for i := range messages {
-		accept := messages[i].GetAccept()
-		require.Equal(t, string(first), string(accept.Value.Id))
-	}
-}
-
 func TestAcceptedMajority(t *testing.T) {
-	store := memory.New()
 	conf := defaultConfig()
-	pax := testPaxos(store, conf)
+	pax := testPaxos(conf)
 
 	// Timeout should start a new ballot, and initialize helpers to track received promises
 	pax.Tick()
@@ -191,9 +124,8 @@ func TestAcceptedMajority(t *testing.T) {
 }
 
 func TestAcceptAsHeartbeat(t *testing.T) {
-	store := memory.New()
 	conf := defaultConfig()
-	pax := testPaxos(store, conf)
+	pax := testPaxos(conf)
 
 	// Timeout should start a new ballot, and initialize helpers to track received promises
 	pax.Tick()
