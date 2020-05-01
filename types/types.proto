@@ -1,0 +1,28 @@
+syntax = "proto3";
+
+package types;
+option go_package = "github.com/dshulyak/rapid/types";
+
+message Node {
+  uint64 ID = 1;
+  string IP = 2;
+  uint64 port = 3;
+  repeated bytes topics = 4;
+}
+
+message Configuration {
+  repeated Node nodes = 1;
+}
+
+message Change {
+  enum ChangeType {
+    JOIN = 0;
+    REMOVE = 1;
+  }
+  ChangeType type = 1;
+  Node node = 2;
+}
+
+message Changes {
+  repeated Change list = 1;
+}
