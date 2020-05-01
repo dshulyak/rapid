@@ -1,5 +1,10 @@
 package types
 
+func WithInstance(instance []byte, msg *Message) *Message {
+	msg.InstanceID = instance
+	return msg
+}
+
 // WithRouting mutates original msg objects, by adding passed from, to fields to the object.
 func WithRouting(from, to uint64, msg *Message) *Message {
 	msg.From = from

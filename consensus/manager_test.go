@@ -27,7 +27,7 @@ func consistent(t *testing.T, values <-chan []*types.LearnedValue, expected *typ
 	}
 }
 
-func TestManagerSimpleProgress(t *testing.T) {
+func TestManagerNoConflictsProgress(t *testing.T) {
 	cluster := NewCluster(4, 10*time.Millisecond, 40)
 	cluster.Start()
 	defer cluster.Stop()

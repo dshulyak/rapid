@@ -21,6 +21,8 @@ func NewCluster(n int, tick time.Duration, jitter int64) *Cluster {
 		replicas = append(replicas, uint64(i))
 	}
 	managers := map[uint64]*consensus.Manager{}
+	instanceID := make([]byte, 4)
+	rand.Read(instanceID)
 	for i := 1; i <= n; i++ {
 		conf := consensus.Config{
 			Timeout:          8,
@@ -28,6 +30,7 @@ func NewCluster(n int, tick time.Duration, jitter int64) *Cluster {
 			ReplicaID:        uint64(i),
 			FastQuorum:       3 * n / 4,
 			ClassicQuorum:    n/2 + 1,
+			InstanceID:       instanceID,
 			Replicas:         replicas,
 		}
 		pax := consensus.NewPaxos(logger, conf)

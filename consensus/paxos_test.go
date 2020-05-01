@@ -1,6 +1,7 @@
 package consensus_test
 
 import (
+	"os"
 	"testing"
 
 	"github.com/dshulyak/rapid/consensus"
@@ -9,8 +10,20 @@ import (
 	"go.uber.org/zap"
 )
 
-func testLogger() *zap.SugaredLogger {
+func nopLogger() *zap.SugaredLogger {
 	return zap.NewNop().Sugar()
+}
+
+func devLogger() *zap.SugaredLogger {
+	logger, _ := zap.NewDevelopment()
+	return logger.Sugar()
+}
+
+func testLogger() *zap.SugaredLogger {
+	if _, exist := os.LookupEnv("PAXOS_DEBUG"); exist {
+		return devLogger()
+	}
+	return nopLogger()
 }
 
 func defaultConfig() consensus.Config {
@@ -20,6 +33,7 @@ func defaultConfig() consensus.Config {
 		ReplicaID:        1,
 		ClassicQuorum:    3,
 		FastQuorum:       3,
+		InstanceID:       []byte("test"),
 		Replicas:         []uint64{1, 2, 3, 4},
 	}
 }
@@ -27,7 +41,7 @@ func testPaxos(conf consensus.Config) *consensus.Paxos {
 	return consensus.NewPaxos(testLogger(), conf)
 }
 
-func TestPrepareNewOnTimeout(t *testing.T) {
+func TestPaxosPrepareNewOnTimeout(t *testing.T) {
 	pax := testPaxos(defaultConfig())
 
 	pax.Tick()
@@ -42,11 +56,14 @@ func TestPrepareNewOnTimeout(t *testing.T) {
 	}
 }
 
-func TestPromiseNilForValidPrepare(t *testing.T) {
+func TestPaxosPromiseNilForValidPrepare(t *testing.T) {
 	conf := defaultConfig()
 	pax := testPaxos(conf)
 
-	msg := types.WithRouting(2, conf.ReplicaID, types.NewPrepareMessage(1, 1))
+	msg := types.WithInstance(
+		conf.InstanceID,
+		types.WithRouting(2, conf.ReplicaID,
+			types.NewPrepareMessage(1, 1)))
 
 	pax.Step(msg)
 	messages := pax.Messages()
@@ -59,7 +76,7 @@ func TestPromiseNilForValidPrepare(t *testing.T) {
 	require.Empty(t, promise.VoteBallot)
 }
 
-func TestAcceptAnyNilPromisesAggregated(t *testing.T) {
+func TestPaxosAcceptAnyNilPromisesAggregated(t *testing.T) {
 	conf := defaultConfig()
 	pax := testPaxos(conf)
 
@@ -76,7 +93,9 @@ func TestAcceptAnyNilPromisesAggregated(t *testing.T) {
 	}
 
 	for _, r := range conf.Replicas {
-		msg := types.WithRouting(r, 1, types.NewPromiseMessage(1, 1, 0, 0, nil))
+		msg := types.WithInstance(
+			conf.InstanceID,
+			types.WithRouting(r, 1, types.NewPromiseMessage(1, 1, 0, 0, nil)))
 		pax.Step(msg)
 	}
 	messages = pax.Messages()
@@ -87,7 +106,7 @@ func TestAcceptAnyNilPromisesAggregated(t *testing.T) {
 	}
 }
 
-func TestAcceptedMajority(t *testing.T) {
+func TestPaxosAcceptedMajority(t *testing.T) {
 	conf := defaultConfig()
 	pax := testPaxos(conf)
 
@@ -98,7 +117,9 @@ func TestAcceptedMajority(t *testing.T) {
 
 	for _, r := range conf.Replicas {
 		if r != conf.ReplicaID {
-			pax.Step(types.WithRouting(r, conf.ReplicaID, types.NewPromiseMessage(1, 1, 0, 0, nil)))
+			pax.Step(types.WithInstance(
+				conf.InstanceID,
+				types.WithRouting(r, conf.ReplicaID, types.NewPromiseMessage(1, 1, 0, 0, nil))))
 		}
 	}
 	messages = pax.Messages()
@@ -107,7 +128,9 @@ func TestAcceptedMajority(t *testing.T) {
 	id := []byte("replica")
 	for _, r := range conf.Replicas {
 		if r != conf.ReplicaID {
-			pax.Step(types.WithRouting(r, conf.ReplicaID, types.NewAcceptedMessage(1, 1, &types.Value{Id: id})))
+			pax.Step(types.WithInstance(
+				conf.InstanceID,
+				types.WithRouting(r, conf.ReplicaID, types.NewAcceptedMessage(1, 1, &types.Value{Id: id}))))
 		}
 	}
 	messages = pax.Messages()
@@ -123,7 +146,7 @@ func TestAcceptedMajority(t *testing.T) {
 	require.Equal(t, values[0].Value.Id, id)
 }
 
-func TestAcceptAsHeartbeat(t *testing.T) {
+func TestPaxosAcceptAsHeartbeat(t *testing.T) {
 	conf := defaultConfig()
 	pax := testPaxos(conf)
 
@@ -132,11 +155,14 @@ func TestAcceptAsHeartbeat(t *testing.T) {
 
 	for _, r := range conf.Replicas {
 		if r != conf.ReplicaID {
-			pax.Step(types.WithRouting(
-				r,
-				conf.ReplicaID,
-				types.NewPromiseMessage(1, 1, 0, 0, nil),
-			))
+			pax.Step(
+				types.WithInstance(
+					conf.InstanceID,
+					types.WithRouting(
+						r,
+						conf.ReplicaID,
+						types.NewPromiseMessage(1, 1, 0, 0, nil),
+					)))
 		}
 	}
 	pax.Tick()

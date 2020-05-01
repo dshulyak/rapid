@@ -21,6 +21,7 @@ type Config struct {
 	HeartbeatTimeout          int
 	ReplicaID                 uint64
 	ClassicQuorum, FastQuorum int
+	InstanceID                []byte
 	Replicas                  []uint64
 }
 
@@ -32,6 +33,7 @@ func NewPaxos(logger *zap.SugaredLogger, conf Config) *Paxos {
 	logger = logger.Named("paxos").With("node", conf.ReplicaID)
 	return &Paxos{
 		conf:               conf,
+		instanceID:         conf.InstanceID,
 		mainLogger:         logger,
 		logger:             logger,
 		replicas:           replicas,
@@ -67,7 +69,7 @@ type Paxos struct {
 	// use Accept{Any} as a heartbeat message
 	replicas map[uint64]*replicaState
 
-	// ticks are for tracking election timer
+	// ticks are for leader election timeout
 	ticks int
 
 	// promiseAggregate maps sequence to promise messages
@@ -153,13 +155,12 @@ func (p *Paxos) renounceLeadership() {
 
 // TODO commit must append values to p.values if they are commited in order.
 func (p *Paxos) commit(values ...*types.LearnedValue) {
-	commited := p.log.Commited()
 	for _, v := range values {
 		p.logger.Info("commited value=", v)
-		if v.Sequence > commited {
+		if v.Sequence > p.log.Commited() {
 			p.values = append(p.values, v)
+			p.log.Commit(v)
 		}
-		p.log.Commit(v)
 	}
 }
 
@@ -175,56 +176,63 @@ func (p *Paxos) send(original *types.Message, recipients ...uint64) {
 	}
 	for _, to := range recipients {
 		msg := *original
-		msg.From = p.conf.ReplicaID
-		msg.To = to
+		out := types.WithRouting(p.conf.ReplicaID, to, &msg)
+		out = types.WithInstance(p.instanceID, out)
 		p.replicas[to].ticks = 0
 		if msg.To == p.conf.ReplicaID {
-			p.logger.Debug("sending to self=", &msg)
-			p.Step(&msg)
+			p.logger.Debug("sending to self=", out)
+			p.Step(out)
 			continue
 		}
-		p.logger.Debug("sending=", &msg)
-		p.messages = append(p.messages, &msg)
+		p.logger.Debug("sending=", out)
+		p.messages = append(p.messages, out)
 	}
 }
 
 func (p *Paxos) Step(msg *types.Message) {
 	p.logger = p.mainLogger.With("ballot", p.ballot)
+	p.logger.Debug("processing=", msg.String())
 	if msg.To != p.conf.ReplicaID {
 		p.logger.Error("delivered to wrong node.", " message=", msg)
 		return
 	}
-	p.logger.Debug("processing=", msg.String())
+
+	if learned := msg.GetLearned(); learned != nil {
+		p.stepLearned(msg)
+		return
+	}
+
+	if bytes.Compare(msg.InstanceID, p.instanceID) != 0 {
+		return
+	}
+
 	if prepare := msg.GetPrepare(); prepare != nil {
-		_ = p.stepPrepare(msg)
+		p.stepPrepare(msg)
 	}
 	if promise := msg.GetPromise(); promise != nil {
-		_ = p.stepPromise(msg)
+		p.stepPromise(msg)
 	}
 	if accept := msg.GetAccept(); accept != nil {
-		_ = p.stepAccept(msg)
+		p.stepAccept(msg)
 	}
 	if accepted := msg.GetAccepted(); accepted != nil {
-		_ = p.stepAccepted(msg)
-	}
-	if learned := msg.GetLearned(); learned != nil {
-		_ = p.stepLearned(msg)
+		p.stepAccepted(msg)
 	}
 }
 
 // TODO move to Acceptor role.
-func (p *Paxos) stepPrepare(msg *types.Message) error {
+func (p *Paxos) stepPrepare(msg *types.Message) {
 	prepare := msg.GetPrepare()
 	if prepare.Ballot <= p.ballot {
 		// return only a ballot for the sender to update himself
 		p.logger.Debug("prepare with old ballot.", " current=", p.ballot, " prepare=", prepare.Ballot)
 		p.send(types.NewFailedPromiseMessage(p.ballot), msg.From)
-		return nil
+		return
 	}
 	if prepare.Sequence < p.log.Commited() {
 		// update peer with last known commited value
 		p.send(types.NewLearnedMessage(p.log.Get(p.log.Commited())), msg.From)
-		return nil
+		return
 	}
 	p.ticks = 0
 	p.ballot = prepare.Ballot
@@ -246,21 +254,21 @@ func (p *Paxos) stepPrepare(msg *types.Message) error {
 			value),
 		msg.From,
 	)
-	return nil
+	return
 }
 
 // TODO stepPromise must be processed by Coordinator role.
-func (p *Paxos) stepPromise(msg *types.Message) error {
+func (p *Paxos) stepPromise(msg *types.Message) {
 	promise := msg.GetPromise()
 	if promise.Ballot > p.ballot {
 		p.logger.Debug("received newer ballot in promise=", msg)
 		p.ballot = promise.Ballot
 		p.renounceLeadership()
-		return nil
+		return
 	}
 	// ignore old messages
 	if promise.Ballot < p.ballot {
-		return nil
+		return
 	}
 	p.commited.Update(msg.From, promise.CommitedSequence)
 	p.updateReplicas()
@@ -268,7 +276,7 @@ func (p *Paxos) stepPromise(msg *types.Message) error {
 	agg, exist := p.promiseAggregates[promise.Sequence]
 	if !exist {
 		p.logger.Debug("ignored promise=", msg)
-		return nil
+		return
 	}
 
 	agg.add(msg.From, promise.Ballot, promise.Value)
@@ -288,25 +296,25 @@ func (p *Paxos) stepPromise(msg *types.Message) error {
 			value = anyValue
 		}
 		p.send(types.NewAcceptMessage(p.ballot, promise.Sequence, value))
-		return nil
+		return
 	}
-	return nil
+	return
 }
 
 // Accept message received by Acceptors
-func (p *Paxos) stepAccept(msg *types.Message) error {
+func (p *Paxos) stepAccept(msg *types.Message) {
 	accept := msg.GetAccept()
 	if p.ballot > accept.Ballot {
 		// it can also return failed accepted message, but returning failed promise is
 		// safe from protocol pov and tehcnically achieves the same result.
 		// the purpose is the same as in stepPrepare - for coordinator to update himself
 		p.send(types.NewFailedPromiseMessage(p.ballot), msg.From)
-		return nil
+		return
 	}
 	if accept.Sequence < p.log.Commited() {
 		// update peer with last known commited value
 		p.send(types.NewLearnedMessage(p.log.Get(p.log.Commited())), msg.From)
-		return nil
+		return
 	}
 
 	p.ballot = accept.Ballot
@@ -314,7 +322,7 @@ func (p *Paxos) stepAccept(msg *types.Message) error {
 	value := accept.Value
 	if value == nil {
 		p.logger.Debug("received heartbeat.", " from=", msg.From)
-		return nil
+		return
 	}
 	if IsAny(value) {
 		learned := p.log.Get(accept.Sequence)
@@ -322,7 +330,7 @@ func (p *Paxos) stepAccept(msg *types.Message) error {
 			value = learned.Value
 		} else if p.proposed.empty() {
 			p.pendingAccept = msg
-			return nil
+			return
 		} else {
 			value = p.proposed.pop()
 		}
@@ -336,20 +344,20 @@ func (p *Paxos) stepAccept(msg *types.Message) error {
 	p.log.Add(learned)
 	p.send(types.NewAcceptedMessage(accept.Ballot, accept.Sequence, value), msg.From)
 	p.pendingAccept = nil
-	return nil
+	return
 }
 
 // Accepted received by Coordinator.
-func (p *Paxos) stepAccepted(msg *types.Message) error {
+func (p *Paxos) stepAccepted(msg *types.Message) {
 	accepted := msg.GetAccepted()
 	if p.ballot > accepted.Ballot {
 		p.ballot = accepted.Ballot
 		p.renounceLeadership()
-		return nil
+		return
 	}
 	// TODO send that node an update with new ballot
 	if accepted.Ballot < p.ballot {
-		return nil
+		return
 	}
 	agg, exist := p.acceptedAggregates[accepted.Sequence]
 	if !exist {
@@ -357,7 +365,7 @@ func (p *Paxos) stepAccepted(msg *types.Message) error {
 			" ballot=", accepted.Ballot,
 			" sequence=", accepted.Sequence,
 			" from=", msg.From)
-		return nil
+		return
 	}
 	agg.add(msg.From, accepted.Ballot, accepted.Value)
 	if agg.complete() {
@@ -385,7 +393,7 @@ func (p *Paxos) stepAccepted(msg *types.Message) error {
 				p.acceptedAggregates[seq] = newAggregate(p.conf.FastQuorum)
 			}
 			p.updateReplicas()
-			return nil
+			return
 		}
 		// coordinated recovery
 		if value == nil {
@@ -395,16 +403,16 @@ func (p *Paxos) stepAccepted(msg *types.Message) error {
 		next := p.ballot + 1
 		p.ballot = next
 		p.send(types.NewAcceptMessage(next, accepted.Sequence, value))
-		return nil
+		return
 	}
-	return nil
+	return
 }
 
-func (p *Paxos) stepLearned(msg *types.Message) error {
+func (p *Paxos) stepLearned(msg *types.Message) {
 	learned := msg.GetLearned()
 	p.commit(learned.Values...)
 	p.send(types.NewUpdatePromiseMessage(p.ballot, p.log.Commited()), msg.From)
-	return nil
+	return
 }
 
 func (p *Paxos) updateReplicas() {
