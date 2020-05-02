@@ -52,6 +52,7 @@ func (m *Manager) Run(ctx context.Context) error {
 			case <-ctx.Done():
 				return ctx.Err()
 			case msgs := <-m.consensus.Messages():
+				// TODO each message should be sent to separate channel to prevent blocking this node.
 				for i := range msgs {
 					if err := m.swarm.Send(ctx, msgs[i]); err != nil {
 						m.logger.Warn("failed to send. ", err)

@@ -98,6 +98,8 @@ func (c *Consensus) Run(ctx context.Context) (err error) {
 
 	c.logger.Info("starting consensus with ticker period=", c.tick)
 	for {
+		// TODO if either outmsgs or values grow out of bounds (define in constructor)
+		// consensus should fail with irrecoverable error
 		if len(outmsgs) > 0 {
 			egress = c.egress
 		} else {
