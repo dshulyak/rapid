@@ -23,7 +23,7 @@ func New(logger *zap.SugaredLogger, node *types.Node, config *types.Configuratio
 		nodes[n.ID] = n
 	}
 	return &Swarm{
-		logger: logger.With("grpc"),
+		logger: logger.Named("grpc"),
 		node:   node,
 		config: nodes,
 		pool:   map[uint64]service.ConsensusClient{},

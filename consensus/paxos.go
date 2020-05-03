@@ -5,6 +5,8 @@ import (
 
 	"github.com/dshulyak/rapid/consensus/types"
 	"go.uber.org/zap"
+
+	atypes "github.com/dshulyak/rapid/types"
 )
 
 var (
@@ -21,26 +23,24 @@ type Config struct {
 	HeartbeatTimeout          int
 	ReplicaID                 uint64
 	ClassicQuorum, FastQuorum int
-	InstanceID                []byte
-	Replicas                  []uint64
+
+	// InstanceID corresponds to unique configuration.
+	InstanceID    []byte
+	Node          *atypes.Node
+	Configuration *atypes.Configuration
 }
 
 func NewPaxos(logger *zap.SugaredLogger, conf Config) *Paxos {
-	replicas := map[uint64]*replicaState{}
-	for _, r := range conf.Replicas {
-		replicas[r] = &replicaState{}
-	}
 	logger = logger.Named("paxos").With("node", conf.ReplicaID)
 	return &Paxos{
 		conf:               conf,
 		instanceID:         conf.InstanceID,
 		mainLogger:         logger,
 		logger:             logger,
-		replicas:           replicas,
+		replicas:           newReplicasInfo(conf.Configuration.Nodes),
 		promiseAggregates:  map[uint64]*aggregate{},
 		acceptedAggregates: map[uint64]*aggregate{},
-		log:                NewLog(),
-		commited:           NewCommitedState(conf.Replicas),
+		log:                newValues(),
 		proposed:           newQueue(),
 	}
 }
@@ -67,7 +67,7 @@ type Paxos struct {
 	// we need to have information if replica is currently reachable or not
 	// to avoid generating/sending useless messages
 	// use Accept{Any} as a heartbeat message
-	replicas map[uint64]*replicaState
+	replicas replicasInfo
 
 	// ticks are for leader election timeout
 	ticks int
@@ -81,13 +81,10 @@ type Paxos struct {
 	// right when proposed value is delivered.
 	pendingAccept *types.Message
 
-	log    *Log
+	log    *values
 	ballot uint64
-	// commited is not nil only for the coordinator
-	commited *CommitedState
 
 	messages []*types.Message
-
 	// values meant to be consumed by state machine application.
 	values []*types.LearnedValue
 }
@@ -101,17 +98,21 @@ func (p *Paxos) Tick() {
 			p.slowBallot(p.ballot + 1)
 		}
 	} else {
-		for id, state := range p.replicas {
-			if id == p.conf.ReplicaID {
-				continue
+		p.replicas.iterate(func(state *replicaState) bool {
+			if state.id == p.conf.ReplicaID {
+				return true
 			}
 			state.ticks++
 			if state.ticks >= p.conf.HeartbeatTimeout {
-				p.logger.Debug("sent hearbeat.", " to=", id)
-				p.send(types.NewAcceptMessage(p.ballot, p.log.Commited(), nil), id)
+				p.logger.Debug("sent hearbeat.", " to=", state.id)
+				p.sendOne(
+					types.NewAcceptMessage(p.ballot, p.log.commited(), nil),
+					state.id,
+				)
 				state.ticks = 0
 			}
-		}
+			return true
+		})
 	}
 }
 
@@ -119,12 +120,15 @@ func (p *Paxos) Propose(value *types.Value) {
 	if p.pendingAccept != nil {
 		p.logger.Debug("accepted proposed value=", value)
 		accept := p.pendingAccept.GetAccept()
-		p.log.Add(&types.LearnedValue{
+		p.log.add(&types.LearnedValue{
 			Ballot:   accept.Ballot,
 			Sequence: accept.Sequence,
 			Value:    value,
 		})
-		p.send(types.NewAcceptedMessage(accept.Ballot, accept.Sequence, value), p.pendingAccept.From)
+		p.sendOne(
+			types.NewAcceptedMessage(accept.Ballot, accept.Sequence, value),
+			p.pendingAccept.From,
+		)
 		p.pendingAccept = nil
 	} else {
 		p.logger.Debug("queued proposed value=", value)
@@ -133,7 +137,7 @@ func (p *Paxos) Propose(value *types.Value) {
 }
 
 func (p *Paxos) slowBallot(bal uint64) {
-	seq := p.log.Commited() + 1
+	seq := p.log.commited() + 1
 	p.promiseAggregates[seq] = newAggregate(p.conf.FastQuorum)
 	p.logger.Debug("started election ballot.",
 		" ballot=", bal,
@@ -157,9 +161,9 @@ func (p *Paxos) renounceLeadership() {
 func (p *Paxos) commit(values ...*types.LearnedValue) {
 	for _, v := range values {
 		p.logger.Info("commited value=", v)
-		if v.Sequence > p.log.Commited() {
+		if v.Sequence > p.log.commited() {
 			p.values = append(p.values, v)
-			p.log.Commit(v)
+			p.log.commit(v)
 		}
 	}
 }
@@ -170,23 +174,25 @@ func (p *Paxos) Values() []*types.LearnedValue {
 	return values
 }
 
-func (p *Paxos) send(original *types.Message, recipients ...uint64) {
-	if len(recipients) == 0 {
-		recipients = p.conf.Replicas
-	}
-	for _, to := range recipients {
+func (p *Paxos) send(original *types.Message) {
+	p.replicas.iterate(func(state *replicaState) bool {
 		msg := *original
-		out := types.WithRouting(p.conf.ReplicaID, to, &msg)
-		out = types.WithInstance(p.instanceID, out)
-		p.replicas[to].ticks = 0
-		if msg.To == p.conf.ReplicaID {
-			p.logger.Debug("sending to self=", out)
-			p.Step(out)
-			continue
-		}
-		p.logger.Debug("sending=", out)
-		p.messages = append(p.messages, out)
+		p.sendOne(&msg, state.id)
+		return true
+	})
+}
+
+func (p *Paxos) sendOne(msg *types.Message, to uint64) {
+	msg = types.WithRouting(p.conf.ReplicaID, to, msg)
+	msg = types.WithInstance(p.instanceID, msg)
+	p.replicas.resetTicks(to)
+	if msg.To == p.conf.ReplicaID {
+		p.logger.Debug("sending to self=", msg)
+		p.Step(msg)
+		return
 	}
+	p.logger.Debug("sending=", msg)
+	p.messages = append(p.messages, msg)
 }
 
 func (p *Paxos) Step(msg *types.Message) {
@@ -226,17 +232,17 @@ func (p *Paxos) stepPrepare(msg *types.Message) {
 	if prepare.Ballot <= p.ballot {
 		// return only a ballot for the sender to update himself
 		p.logger.Debug("prepare with old ballot.", " current=", p.ballot, " prepare=", prepare.Ballot)
-		p.send(types.NewFailedPromiseMessage(p.ballot), msg.From)
+		p.sendOne(types.NewFailedPromiseMessage(p.ballot), msg.From)
 		return
 	}
-	if prepare.Sequence < p.log.Commited() {
+	if prepare.Sequence < p.log.commited() {
 		// update peer with last known commited value
-		p.send(types.NewLearnedMessage(p.log.Get(p.log.Commited())), msg.From)
+		p.sendOne(types.NewLearnedMessage(p.log.get(p.log.commited())), msg.From)
 		return
 	}
 	p.ticks = 0
 	p.ballot = prepare.Ballot
-	learned := p.log.Get(prepare.Sequence)
+	learned := p.log.get(prepare.Sequence)
 	var (
 		value *types.Value
 		voted uint64
@@ -245,12 +251,12 @@ func (p *Paxos) stepPrepare(msg *types.Message) {
 		value = learned.Value
 		voted = learned.Ballot
 	}
-	p.send(
+	p.sendOne(
 		types.NewPromiseMessage(
 			p.ballot,
 			prepare.Sequence,
 			voted,
-			p.log.Commited(),
+			p.log.commited(),
 			value),
 		msg.From,
 	)
@@ -270,7 +276,7 @@ func (p *Paxos) stepPromise(msg *types.Message) {
 	if promise.Ballot < p.ballot {
 		return
 	}
-	p.commited.Update(msg.From, promise.CommitedSequence)
+	p.replicas.commit(msg.From, promise.CommitedSequence)
 	p.updateReplicas()
 
 	agg, exist := p.promiseAggregates[promise.Sequence]
@@ -308,12 +314,12 @@ func (p *Paxos) stepAccept(msg *types.Message) {
 		// it can also return failed accepted message, but returning failed promise is
 		// safe from protocol pov and tehcnically achieves the same result.
 		// the purpose is the same as in stepPrepare - for coordinator to update himself
-		p.send(types.NewFailedPromiseMessage(p.ballot), msg.From)
+		p.sendOne(types.NewFailedPromiseMessage(p.ballot), msg.From)
 		return
 	}
-	if accept.Sequence < p.log.Commited() {
+	if accept.Sequence < p.log.commited() {
 		// update peer with last known commited value
-		p.send(types.NewLearnedMessage(p.log.Get(p.log.Commited())), msg.From)
+		p.sendOne(types.NewLearnedMessage(p.log.get(p.log.commited())), msg.From)
 		return
 	}
 
@@ -325,7 +331,7 @@ func (p *Paxos) stepAccept(msg *types.Message) {
 		return
 	}
 	if IsAny(value) {
-		learned := p.log.Get(accept.Sequence)
+		learned := p.log.get(accept.Sequence)
 		if learned != nil {
 			value = learned.Value
 		} else if p.proposed.empty() {
@@ -341,8 +347,8 @@ func (p *Paxos) stepAccept(msg *types.Message) {
 		Value:    value,
 	}
 	p.logger.Debug("accepted value=", learned)
-	p.log.Add(learned)
-	p.send(types.NewAcceptedMessage(accept.Ballot, accept.Sequence, value), msg.From)
+	p.log.add(learned)
+	p.sendOne(types.NewAcceptedMessage(accept.Ballot, accept.Sequence, value), msg.From)
 	p.pendingAccept = nil
 	return
 }
@@ -383,7 +389,7 @@ func (p *Paxos) stepAccepted(msg *types.Message) {
 				p.slowBallot(p.ballot + 1)
 			} else {
 				bal := p.ballot
-				seq := p.log.Commited() + 1
+				seq := p.log.commited() + 1
 				p.logger.Debug("waiting for accepted messages.",
 					" ballot=", bal,
 					" sequence=", seq,
@@ -411,38 +417,33 @@ func (p *Paxos) stepAccepted(msg *types.Message) {
 func (p *Paxos) stepLearned(msg *types.Message) {
 	learned := msg.GetLearned()
 	p.commit(learned.Values...)
-	p.send(types.NewUpdatePromiseMessage(p.ballot, p.log.Commited()), msg.From)
+	p.sendOne(types.NewUpdatePromiseMessage(p.ballot, p.log.commited()), msg.From)
 	return
 }
 
 func (p *Paxos) updateReplicas() {
-	commited := p.log.Commited()
-	for i := range p.replicas {
-		if i == p.conf.ReplicaID {
-			continue
+	commited := p.log.commited()
+	p.replicas.iterate(func(state *replicaState) bool {
+		if state.id == p.conf.ReplicaID {
+			return true
 		}
-		replicaCommited := p.commited.Get(i)
-		// in paxos coordinator can be elected even if his log is not the most recent
-		// in such case he will eventually catch up
-		if replicaCommited >= commited {
-			continue
+		if state.sequence >= commited {
+			return true
 		}
-		p.send(types.NewLearnedMessage(p.log.Get(commited)), i)
-	}
+		p.sendOne(types.NewLearnedMessage(p.log.get(commited)), state.id)
+		return true
+	})
 }
 
 // skipPrepareAllowed is allowed if coordinator has the most recent log among majority of the cluster.
 func (p *Paxos) skipPrepareAllowed() bool {
-	commited := p.log.Commited()
+	commited := p.log.commited()
 	count := 0
-	for i := range p.replicas {
-		rcomm := p.commited.Get(i)
-		if commited >= rcomm {
+	p.replicas.iterate(func(state *replicaState) bool {
+		if commited >= state.sequence {
 			count++
 		}
-		if count == p.conf.FastQuorum {
-			return true
-		}
-	}
-	return false
+		return count != p.conf.FastQuorum
+	})
+	return count >= p.conf.FastQuorum
 }

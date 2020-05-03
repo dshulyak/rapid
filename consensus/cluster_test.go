@@ -10,15 +10,17 @@ import (
 	"github.com/dshulyak/rapid/consensus/types"
 	"go.uber.org/zap"
 	"golang.org/x/sync/errgroup"
+
+	atypes "github.com/dshulyak/rapid/types"
 )
 
 func NewCluster(n int, tick time.Duration, jitter int64) *Cluster {
 	logger := testLogger()
 	network := inproc.NewNetwork()
 
-	replicas := []uint64{}
+	conf := &atypes.Configuration{}
 	for i := 1; i <= n; i++ {
-		replicas = append(replicas, uint64(i))
+		conf.Nodes = append(conf.Nodes, &atypes.Node{ID: uint64(i)})
 	}
 	managers := map[uint64]*consensus.Manager{}
 	instanceID := make([]byte, 4)
@@ -31,7 +33,7 @@ func NewCluster(n int, tick time.Duration, jitter int64) *Cluster {
 			FastQuorum:       3 * n / 4,
 			ClassicQuorum:    n/2 + 1,
 			InstanceID:       instanceID,
-			Replicas:         replicas,
+			Configuration:    conf,
 		}
 		pax := consensus.NewPaxos(logger, conf)
 		tick := tick + time.Duration(rand.Int63n(jitter))*time.Millisecond

@@ -8,6 +8,8 @@ import (
 	"github.com/dshulyak/rapid/consensus/types"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/zap"
+
+	atypes "github.com/dshulyak/rapid/types"
 )
 
 func nopLogger() *zap.SugaredLogger {
@@ -34,7 +36,11 @@ func defaultConfig() consensus.Config {
 		ClassicQuorum:    3,
 		FastQuorum:       3,
 		InstanceID:       []byte("test"),
-		Replicas:         []uint64{1, 2, 3, 4},
+		Configuration: &atypes.Configuration{
+			Nodes: []*atypes.Node{
+				{ID: 1}, {ID: 2}, {ID: 3}, {ID: 4},
+			},
+		},
 	}
 }
 func testPaxos(conf consensus.Config) *consensus.Paxos {
@@ -92,10 +98,10 @@ func TestPaxosAcceptAnyNilPromisesAggregated(t *testing.T) {
 		require.Equal(t, 1, int(prepare.Sequence))
 	}
 
-	for _, r := range conf.Replicas {
+	for _, n := range conf.Configuration.Nodes {
 		msg := types.WithInstance(
 			conf.InstanceID,
-			types.WithRouting(r, 1, types.NewPromiseMessage(1, 1, 0, 0, nil)))
+			types.WithRouting(n.ID, 1, types.NewPromiseMessage(1, 1, 0, 0, nil)))
 		pax.Step(msg)
 	}
 	messages = pax.Messages()
@@ -115,22 +121,22 @@ func TestPaxosAcceptedMajority(t *testing.T) {
 	messages := pax.Messages()
 	require.Len(t, messages, 3)
 
-	for _, r := range conf.Replicas {
-		if r != conf.ReplicaID {
+	for _, n := range conf.Configuration.Nodes {
+		if n.ID != conf.ReplicaID {
 			pax.Step(types.WithInstance(
 				conf.InstanceID,
-				types.WithRouting(r, conf.ReplicaID, types.NewPromiseMessage(1, 1, 0, 0, nil))))
+				types.WithRouting(n.ID, conf.ReplicaID, types.NewPromiseMessage(1, 1, 0, 0, nil))))
 		}
 	}
 	messages = pax.Messages()
 	require.Len(t, messages, 3)
 
 	id := []byte("replica")
-	for _, r := range conf.Replicas {
-		if r != conf.ReplicaID {
+	for _, n := range conf.Configuration.Nodes {
+		if n.ID != conf.ReplicaID {
 			pax.Step(types.WithInstance(
 				conf.InstanceID,
-				types.WithRouting(r, conf.ReplicaID, types.NewAcceptedMessage(1, 1, &types.Value{Id: id}))))
+				types.WithRouting(n.ID, conf.ReplicaID, types.NewAcceptedMessage(1, 1, &types.Value{Id: id}))))
 		}
 	}
 	messages = pax.Messages()
@@ -153,13 +159,13 @@ func TestPaxosAcceptAsHeartbeat(t *testing.T) {
 	// Timeout should start a new ballot, and initialize helpers to track received promises
 	pax.Tick()
 
-	for _, r := range conf.Replicas {
-		if r != conf.ReplicaID {
+	for _, n := range conf.Configuration.Nodes {
+		if n.ID != conf.ReplicaID {
 			pax.Step(
 				types.WithInstance(
 					conf.InstanceID,
 					types.WithRouting(
-						r,
+						n.ID,
 						conf.ReplicaID,
 						types.NewPromiseMessage(1, 1, 0, 0, nil),
 					)))

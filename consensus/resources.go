@@ -2,64 +2,103 @@ package consensus
 
 import (
 	"github.com/dshulyak/rapid/consensus/types"
+	atypes "github.com/dshulyak/rapid/types"
 )
 
-// TODO rename from Log to something more appropriate
 // Application doesn't need to store log of values, it is enough to ensure that last agreed value is replicated.
-func NewLog() *Log {
-	return &Log{values: map[uint64]*types.LearnedValue{}}
+func newValues() *values {
+	return &values{values: map[uint64]*types.LearnedValue{}}
 }
 
-type Log struct {
-	commited uint64
+type values struct {
+	// sequence is the last commited sequence number.
+	sequence uint64
 	values   map[uint64]*types.LearnedValue
 }
 
 // Add expects values to be provided in order.
-func (l *Log) Add(values ...*types.LearnedValue) {
+func (vs *values) add(values ...*types.LearnedValue) {
 	for _, v := range values {
-		l.values[v.Sequence] = v
+		vs.values[v.Sequence] = v
 	}
 }
 
 // Commit expects values to be provided in order.
-func (l *Log) Commit(value *types.LearnedValue) {
-	if value.Sequence <= l.commited {
+func (vs *values) commit(value *types.LearnedValue) {
+	if value.Sequence <= vs.sequence {
 		return
 	}
-	l.Add(value)
-	l.commited = value.Sequence
+	vs.add(value)
+	vs.sequence = value.Sequence
 }
 
-func (l *Log) Get(seq uint64) *types.LearnedValue {
-	val, _ := l.values[seq]
-	return val
+func (vs *values) get(seq uint64) *types.LearnedValue {
+	return vs.values[seq]
 }
 
-func (l *Log) Commited() uint64 {
-	return l.commited
+func (vs *values) commited() uint64 {
+	return vs.sequence
 }
 
-func NewCommitedState(replicas []uint64) *CommitedState {
-	return &CommitedState{
-		values: map[uint64]uint64{},
+type replicaState struct {
+	id uint64
+	// sequence is the last known commited sequence.
+	// used to determine if we need to send newer record.
+	sequence uint64
+	// ticks are used for heartbeat timeout, it ticks are equal to heartbeat timeout
+	// coordinator will send out heartbeat to every replica.
+	ticks int
+}
+
+func newReplicasInfo(nodes []*atypes.Node) replicasInfo {
+	info := replicasInfo{
+		replicas: map[uint64]*replicaState{},
+	}
+	for _, n := range nodes {
+		info.replicas[n.ID] = &replicaState{id: n.ID}
+	}
+	return info
+}
+
+type replicasInfo struct {
+	replicas map[uint64]*replicaState
+}
+
+func (info replicasInfo) update(changes *atypes.Changes) {
+	for _, change := range changes.List {
+		switch change.Type {
+		case atypes.Change_JOIN:
+			info.replicas[change.Node.ID] = &replicaState{id: change.Node.ID}
+		case atypes.Change_REMOVE:
+			delete(info.replicas, change.Node.ID)
+		}
 	}
 }
 
-// CommitedState maintained by the coordinator for each replica.
-// It is coordinators reponsibility to share learned values.
-type CommitedState struct {
-	values map[uint64]uint64
+func (info replicasInfo) commited(id uint64) uint64 {
+	return info.replicas[id].sequence
 }
 
-func (cs *CommitedState) Get(replica uint64) uint64 {
-	val, exist := cs.values[replica]
-	if !exist {
-		return 0
+func (info replicasInfo) commit(id, seq uint64) {
+	info.replicas[id].sequence = seq
+}
+
+func (info replicasInfo) ticks(id uint64) int {
+	return info.replicas[id].ticks
+}
+
+func (info replicasInfo) tick(id uint64) {
+	info.replicas[id].ticks++
+}
+
+func (info replicasInfo) resetTicks(id uint64) {
+	info.replicas[id].ticks = 0
+}
+
+func (info replicasInfo) iterate(fn func(*replicaState) bool) {
+	for _, state := range info.replicas {
+		if !fn(state) {
+			return
+		}
 	}
-	return val
-}
-
-func (cs *CommitedState) Update(replica, seq uint64) {
-	cs.values[replica] = seq
 }
