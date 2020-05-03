@@ -7,4 +7,4 @@ generate:
 protoc:
 	protoc --gogofaster_out=$(GOPATH)/src types/types.proto
 	protoc --gogofaster_out=$(GOPATH)/src consensus/types/types.proto
-	protoc --gogofaster_out=plugins=grpc:$(GOPATH)/src consensus/swarms/grpc/server/server.proto
+	protoc --gogofaster_out=plugins=grpc:$(GOPATH)/src consensus/swarms/grpc/service/service.proto

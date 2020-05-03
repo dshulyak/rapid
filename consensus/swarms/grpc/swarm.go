@@ -9,7 +9,7 @@ import (
 	"sync/atomic"
 
 	"github.com/dshulyak/rapid/consensus"
-	"github.com/dshulyak/rapid/consensus/swarms/grpc/server"
+	"github.com/dshulyak/rapid/consensus/swarms/grpc/service"
 	"github.com/dshulyak/rapid/types"
 	"go.uber.org/zap"
 	"google.golang.org/grpc"
@@ -26,7 +26,7 @@ func New(logger *zap.SugaredLogger, node *types.Node, config *types.Configuratio
 		logger: logger.With("grpc"),
 		node:   node,
 		config: nodes,
-		pool:   map[uint64]server.ServerClient{},
+		pool:   map[uint64]service.ConsensusClient{},
 	}
 }
 
@@ -42,7 +42,7 @@ type Swarm struct {
 	consuming int32
 
 	mu   sync.RWMutex
-	pool map[uint64]server.ServerClient
+	pool map[uint64]service.ConsensusClient
 }
 
 func (s *Swarm) Send(ctx context.Context, msg *ctypes.Message) error {
@@ -70,7 +70,7 @@ func (s *Swarm) Send(ctx context.Context, msg *ctypes.Message) error {
 	if err != nil {
 		return fmt.Errorf("failed to dial peer %d: %w", msg.To, err)
 	}
-	client := server.NewServerClient(conn)
+	client := service.NewConsensusClient(conn)
 	s.pool[msg.To] = client
 	_, err = client.Send(ctx, msg)
 	return err
@@ -89,7 +89,7 @@ func (s *Swarm) Consume(ctx context.Context, fn consensus.ConsumeFn) error {
 
 	// TODO pass server options during initialization
 	srv := grpc.NewServer()
-	server.RegisterServerServer(srv, consumer(fn))
+	service.RegisterConsensusServer(srv, consumer(fn))
 
 	errchan := make(chan error, 1)
 	go func() {
@@ -104,11 +104,11 @@ func (s *Swarm) Consume(ctx context.Context, fn consensus.ConsumeFn) error {
 	}
 }
 
-var _ server.ServerServer = (consumer)(nil)
+var _ service.ConsensusServer = (consumer)(nil)
 
 type consumer consensus.ConsumeFn
 
-func (cn consumer) Send(ctx context.Context, message *ctypes.Message) (*server.Empty, error) {
+func (cn consumer) Send(ctx context.Context, message *ctypes.Message) (*service.Empty, error) {
 	if err := cn(ctx, message); err != nil {
 		return nil, err
 	}
