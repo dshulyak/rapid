@@ -65,6 +65,9 @@ type replicasInfo struct {
 }
 
 func (info replicasInfo) update(changes *atypes.Changes) {
+	if changes == nil {
+		return
+	}
 	for _, change := range changes.List {
 		switch change.Type {
 		case atypes.Change_JOIN:

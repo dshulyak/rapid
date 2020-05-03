@@ -35,7 +35,7 @@ func (s *Swarm) Send(ctx context.Context, msg *types.Message) error {
 	if err != nil {
 		return err
 	}
-	s.logger.Debug("send=", msg)
+	//s.logger.Debug("send=", msg)
 	if err := p.send(ctx, msg); err != nil {
 		return err
 	}
@@ -43,9 +43,9 @@ func (s *Swarm) Send(ctx context.Context, msg *types.Message) error {
 }
 
 func (s *Swarm) Consume(ctx context.Context, fn consensus.ConsumeFn) error {
-	s.logger.Debug("register messages consumer")
+	//s.logger.Debug("register messages consumer")
 	s.network.register(s.id, func(ctx context.Context, msg *types.Message) error {
-		s.logger.Debug("received=", msg)
+		//s.logger.Debug("received=", msg)
 		return fn(ctx, msg)
 	})
 	<-ctx.Done()

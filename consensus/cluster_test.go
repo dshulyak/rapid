@@ -23,7 +23,7 @@ func NewCluster(n int, tick time.Duration, jitter int64) *Cluster {
 		conf.Nodes = append(conf.Nodes, &atypes.Node{ID: uint64(i)})
 	}
 	managers := map[uint64]*consensus.Manager{}
-	instanceID := make([]byte, 4)
+	instanceID := []byte("start")
 	rand.Read(instanceID)
 	for i := 1; i <= n; i++ {
 		conf := consensus.Config{

@@ -160,10 +160,12 @@ func (p *Paxos) renounceLeadership() {
 // TODO commit must append values to p.values if they are commited in order.
 func (p *Paxos) commit(values ...*types.LearnedValue) {
 	for _, v := range values {
-		p.logger.Info("commited value=", v)
 		if v.Sequence > p.log.commited() {
 			p.values = append(p.values, v)
 			p.log.commit(v)
+			p.logger.Info("updating configuration to=", v.Value)
+			p.instanceID = v.Value.Id
+			p.replicas.update(v.Value.Changes)
 		}
 	}
 }
@@ -281,7 +283,7 @@ func (p *Paxos) stepPromise(msg *types.Message) {
 
 	agg, exist := p.promiseAggregates[promise.Sequence]
 	if !exist {
-		p.logger.Debug("ignored promise=", msg)
+		p.logger.Debug("skipping promise=", msg)
 		return
 	}
 
@@ -367,7 +369,7 @@ func (p *Paxos) stepAccepted(msg *types.Message) {
 	}
 	agg, exist := p.acceptedAggregates[accepted.Sequence]
 	if !exist {
-		p.logger.Debug("ignored accepted.",
+		p.logger.Debug("skipping accepted.",
 			" ballot=", accepted.Ballot,
 			" sequence=", accepted.Sequence,
 			" from=", msg.From)
@@ -383,6 +385,7 @@ func (p *Paxos) stepAccepted(msg *types.Message) {
 				Sequence: accepted.Sequence,
 				Value:    value,
 			})
+			p.updateReplicas()
 			// start next ballot
 			// we can skip Prepare phase if coordinator log is the most recent
 			if !p.skipPrepareAllowed() {
@@ -398,7 +401,6 @@ func (p *Paxos) stepAccepted(msg *types.Message) {
 				p.send(types.NewAcceptMessage(bal, seq, anyValue))
 				p.acceptedAggregates[seq] = newAggregate(p.conf.FastQuorum)
 			}
-			p.updateReplicas()
 			return
 		}
 		// coordinated recovery

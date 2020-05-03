@@ -54,8 +54,8 @@ func (m *Manager) Run(ctx context.Context) error {
 			case msgs := <-m.consensus.Messages():
 				// TODO each message should be sent to separate channel to prevent blocking this node.
 				for i := range msgs {
-					if err := m.swarm.Send(ctx, msgs[i]); err != nil {
-						m.logger.Warn("failed to send. ", err)
+					if err := m.swarm.Send(ctx, msgs[i]); err != nil && !errors.Is(err, context.Canceled) {
+						m.logger.Warn("failed to send=", err)
 					}
 				}
 			}
@@ -64,7 +64,9 @@ func (m *Manager) Run(ctx context.Context) error {
 	group.Go(func() error {
 		return m.swarm.Consume(ctx, func(_ context.Context, msg *types.Message) error {
 			// if context is nil and queue is full message will be dropped
-			m.consensus.Receive(nil, []*types.Message{msg})
+			if err := m.consensus.Receive(nil, []*types.Message{msg}); err != nil {
+				m.logger.Warn("consensus doesn't accept messages. error=", err)
+			}
 			return nil
 		})
 	})
