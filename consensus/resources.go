@@ -28,6 +28,9 @@ func (vs *values) commit(value *types.LearnedValue) {
 	if value.Sequence <= vs.sequence {
 		return
 	}
+	for i := range vs.values {
+		delete(vs.values, i)
+	}
 	vs.add(value)
 	vs.sequence = value.Sequence
 }
