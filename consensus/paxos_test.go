@@ -140,9 +140,9 @@ func TestPaxosAcceptedMajority(t *testing.T) {
 		}
 	}
 	messages = pax.Messages()
-	require.Len(t, messages, 6) // 3 Accept Any + 3 Learned
+	require.Len(t, messages, 6) // 3 Learned + 3 Accept Any
 
-	for i := 0; i < 3; i++ {
+	for i := 3; i < 6; i++ {
 		accept := messages[i].GetAccept()
 		require.NotNil(t, accept)
 		require.True(t, consensus.IsAny(accept.Value))

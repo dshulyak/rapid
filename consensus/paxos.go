@@ -63,6 +63,9 @@ type Paxos struct {
 
 	// elected is true if coordinator completed 1st phase of paxos succesfully.
 	elected bool
+	// hbmsg is registered once coordinator sends Accept{Any} for the next sequence
+	// it must be used as a heartbeat message to avoid deadlock where message actual Accept{Any} gets dropped
+	hbmsg *types.Message
 
 	// we need to have information if replica is currently reachable or not
 	// to avoid generating/sending useless messages
@@ -97,7 +100,7 @@ func (p *Paxos) Tick() {
 			p.ticks = 0
 			p.slowBallot(p.ballot + 1)
 		}
-	} else {
+	} else if p.elected && p.hbmsg != nil {
 		p.replicas.iterate(func(state *replicaState) bool {
 			if state.id == p.conf.ReplicaID {
 				return true
@@ -105,8 +108,9 @@ func (p *Paxos) Tick() {
 			state.ticks++
 			if state.ticks >= p.conf.HeartbeatTimeout {
 				p.logger.Debug("sent hearbeat.", " to=", state.id)
+				msg := *p.hbmsg
 				p.sendOne(
-					types.NewAcceptMessage(p.ballot, p.log.commited(), nil),
+					&msg,
 					state.id,
 				)
 				state.ticks = 0
@@ -155,6 +159,7 @@ func (p *Paxos) Messages() []*types.Message {
 
 func (p *Paxos) renounceLeadership() {
 	p.elected = false
+	p.hbmsg = nil
 }
 
 // TODO commit must append values to p.values if they are commited in order.
@@ -302,8 +307,11 @@ func (p *Paxos) stepPromise(msg *types.Message) {
 		)
 		if value == nil {
 			value = anyValue
+
 		}
-		p.send(types.NewAcceptMessage(p.ballot, promise.Sequence, value))
+		msg := types.NewAcceptMessage(p.ballot, promise.Sequence, value)
+		p.hbmsg = msg
+		p.send(msg)
 		return
 	}
 	return
@@ -328,10 +336,6 @@ func (p *Paxos) stepAccept(msg *types.Message) {
 	p.ballot = accept.Ballot
 	p.ticks = 0
 	value := accept.Value
-	if value == nil {
-		p.logger.Debug("received heartbeat.", " from=", msg.From)
-		return
-	}
 	if IsAny(value) {
 		learned := p.log.get(accept.Sequence)
 		if learned != nil {
@@ -398,7 +402,9 @@ func (p *Paxos) stepAccepted(msg *types.Message) {
 					" sequence=", seq,
 					" is-any=", true,
 				)
-				p.send(types.NewAcceptMessage(bal, seq, anyValue))
+				msg := types.NewAcceptMessage(bal, seq, anyValue)
+				p.hbmsg = msg
+				p.send(msg)
 				p.acceptedAggregates[seq] = newAggregate(p.conf.FastQuorum)
 			}
 			return
