@@ -171,6 +171,8 @@ func (p *Paxos) commit(values ...*types.LearnedValue) {
 			p.logger.Info("updating configuration to=", v.Value)
 			p.instanceID = v.Value.Id
 			p.replicas.update(v.Value.Changes)
+			// TODO if node with id was removed from cluster - panic and make application
+			// bootstrap itself again
 		}
 	}
 }

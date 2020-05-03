@@ -6,6 +6,8 @@ import (
 	"sync"
 
 	"github.com/dshulyak/rapid/consensus/types"
+	atypes "github.com/dshulyak/rapid/types"
+
 	"go.uber.org/zap"
 	"golang.org/x/sync/errgroup"
 )
@@ -20,6 +22,7 @@ type ConsumeFn func(context.Context, *types.Message) error
 type Swarm interface {
 	Send(context.Context, *types.Message) error
 	Consume(context.Context, ConsumeFn) error
+	Update(*atypes.Changes) error
 }
 
 func NewManager(logger *zap.SugaredLogger, cons *Consensus, swarm Swarm) *Manager {
@@ -45,6 +48,20 @@ func (m *Manager) Run(ctx context.Context) error {
 	group, ctx := errgroup.WithContext(ctx)
 	group.Go(func() error {
 		return m.consensus.Run(ctx)
+	})
+	group.Go(func() error {
+		swarmvals := make(chan []*types.LearnedValue, 1)
+		m.bus.subscribe(ctx, swarmvals)
+		for {
+			select {
+			case <-ctx.Done():
+				return ctx.Err()
+			case vals := <-swarmvals:
+				for _, v := range vals {
+					m.swarm.Update(v.Value.Changes)
+				}
+			}
+		}
 	})
 	group.Go(func() error {
 		for {
@@ -76,6 +93,7 @@ func (m *Manager) Run(ctx context.Context) error {
 			case <-ctx.Done():
 				return ctx.Err()
 			case vals := <-m.consensus.Learned():
+
 				m.bus.send(ctx, vals)
 			}
 		}

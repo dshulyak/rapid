@@ -8,6 +8,9 @@ import (
 
 	"github.com/dshulyak/rapid/consensus"
 	"github.com/dshulyak/rapid/consensus/types"
+
+	atypes "github.com/dshulyak/rapid/types"
+
 	"go.uber.org/zap"
 )
 
@@ -25,6 +28,11 @@ type Swarm struct {
 	logger  *zap.SugaredLogger
 	id      uint64
 	network *Network
+}
+
+func (s *Swarm) Update(changes *atypes.Changes) error {
+	s.logger.Debug("applying changes=", changes)
+	return nil
 }
 
 func (s *Swarm) Send(ctx context.Context, msg *types.Message) error {

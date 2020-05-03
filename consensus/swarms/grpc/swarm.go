@@ -45,6 +45,27 @@ type Swarm struct {
 	pool map[uint64]service.ConsensusClient
 }
 
+func (s *Swarm) Update(changes *types.Changes) error {
+	if changes == nil {
+		return nil
+	}
+	if len(changes.List) == 0 {
+		return nil
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for _, change := range changes.List {
+		switch change.Type {
+		case types.Change_JOIN:
+			s.config[change.Node.ID] = change.Node
+		case types.Change_REMOVE:
+			delete(s.config, change.Node.ID)
+			delete(s.pool, change.Node.ID)
+		}
+	}
+	return nil
+}
+
 func (s *Swarm) Send(ctx context.Context, msg *ctypes.Message) error {
 	s.mu.RLock()
 	if client, exist := s.pool[msg.To]; exist {
