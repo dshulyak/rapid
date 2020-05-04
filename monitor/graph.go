@@ -16,7 +16,10 @@ func NewKGraph(seed int64, k int, nodes []*types.Node) *KGraph {
 		rng.Shuffle(lth, func(i, j int) {
 			tmp[i], tmp[j] = tmp[j], tmp[i]
 		})
-		g := &graph{}
+		g := &graph{
+			observers: map[uint64]uint64{},
+			subjects:  map[uint64]uint64{},
+		}
 		for i := 0; i < lth-1; i++ {
 			g.add(tmp[i].ID, tmp[i+1].ID)
 		}
@@ -29,6 +32,7 @@ func NewKGraph(seed int64, k int, nodes []*types.Node) *KGraph {
 	}
 	// TODO there should be a test that good expander test was generated.
 	return &KGraph{
+		K:      k,
 		rng:    rng,
 		graphs: graphs,
 		nodes:  nodemap,
@@ -36,6 +40,7 @@ func NewKGraph(seed int64, k int, nodes []*types.Node) *KGraph {
 }
 
 type KGraph struct {
+	K      int
 	rng    *rand.Rand
 	graphs []*graph
 	nodes  map[uint64]*types.Node
