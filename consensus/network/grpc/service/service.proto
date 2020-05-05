@@ -1,6 +1,6 @@
 syntax = "proto3";
 
-option go_package = "github.com/dshulyak/rapid/consensus/swarms/grpc/service";
+option go_package = "github.com/dshulyak/rapid/consensus/network/grpc/service";
 
 import "consensus/types/types.proto";
 

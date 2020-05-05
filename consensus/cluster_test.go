@@ -6,7 +6,7 @@ import (
 	"time"
 
 	"github.com/dshulyak/rapid/consensus"
-	"github.com/dshulyak/rapid/consensus/swarms/inproc"
+	"github.com/dshulyak/rapid/consensus/network/inproc"
 	"github.com/dshulyak/rapid/consensus/types"
 	"go.uber.org/zap"
 	"golang.org/x/sync/errgroup"

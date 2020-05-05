@@ -1,0 +1,27 @@
+syntax = "proto3";
+
+option go_package = "github.com/dshulyak/rapid/monitor/network/grpc/service";
+
+import "monitor/types/types.proto";
+import "types/types.proto";
+
+message Empty {};
+
+message JoinRequest {
+  types.Node node = 1;
+  uint64 configurationID = 2;
+};
+
+message JoinResponse {
+  enum Status {
+    OK = 0;
+    OLD_CONFIGURATION_ID = 1;
+  }
+  Status status = 1;
+};
+
+
+service Monitor {
+  rpc Broadcast(types.Alert) returns (Empty) {}
+  rpc Join(JoinRequest) returns (JoinResponse) {}
+}
