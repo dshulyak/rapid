@@ -1,9 +1,7 @@
 package monitor
 
 import (
-	"encoding/binary"
 	"hash"
-	"hash/fnv"
 	"sort"
 
 	"github.com/dshulyak/rapid/types"
@@ -12,7 +10,6 @@ import (
 func NewKGraph(k int, nodes []*types.Node) *KGraph {
 	lth := len(nodes)
 	graphs := make([]*graph, k)
-	hasher := fnv.New64()
 	nodemap := map[uint64]*types.Node{}
 	nodeUIDs := make([]uint64, 0, lth)
 
@@ -26,25 +23,12 @@ func NewKGraph(k int, nodes []*types.Node) *KGraph {
 		copy(tmp, nodeUIDs)
 
 		g := &graph{
-			prefix:    byte(i),
+			seed:      uint8(i + 1),
 			observers: map[uint64]uint64{},
 			subjects:  map[uint64]uint64{},
 		}
 		sort.Slice(tmp, func(i, j int) bool {
-			ibuf := make([]byte, 9)
-			jbuf := make([]byte, 9)
-			ibuf[0] = g.prefix
-			jbuf[0] = g.prefix
-			binary.BigEndian.PutUint64(ibuf[1:], tmp[i])
-			binary.BigEndian.PutUint64(jbuf[1:], tmp[j])
-
-			_, _ = hasher.Write(ibuf)
-			isum := hasher.Sum64()
-			hasher.Reset()
-
-			_, _ = hasher.Write(jbuf)
-			jsum := hasher.Sum64()
-			return isum < jsum
+			return fnvhash64(g.seed, tmp[i]) < fnvhash64(g.seed, tmp[j])
 		})
 
 		for i := 0; i < lth-1; i++ {
@@ -89,7 +73,7 @@ func (k *KGraph) IterateObservers(v uint64, fn func(*types.Node) bool) {
 }
 
 type graph struct {
-	prefix              byte
+	seed                uint8
 	hasher              hash.Hash64
 	observers, subjects map[uint64]uint64
 }
@@ -105,4 +89,23 @@ func (g *graph) subject(u uint64) uint64 {
 
 func (g *graph) observer(v uint64) uint64 {
 	return g.observers[v]
+}
+
+// fnv-1 hash
+func fnvhash64(seed uint8, data uint64) uint64 {
+	const (
+		prime  uint64 = 1099511628211
+		offset uint64 = 14695981039346656037
+	)
+	hash := offset
+
+	hash *= prime
+	hash ^= uint64(seed)
+
+	for i := 0; i < 8; i++ {
+		hash *= prime
+		hash ^= data & 255
+		data >>= 8
+	}
+	return hash
 }
