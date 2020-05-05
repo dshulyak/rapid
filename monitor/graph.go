@@ -1,39 +1,60 @@
 package monitor
 
 import (
-	"math/rand"
+	"encoding/binary"
+	"hash"
+	"hash/fnv"
+	"sort"
 
 	"github.com/dshulyak/rapid/types"
 )
 
-func NewKGraph(seed int64, k int, nodes []*types.Node) *KGraph {
-	rng := rand.New(rand.NewSource(seed))
+func NewKGraph(k int, nodes []*types.Node) *KGraph {
 	lth := len(nodes)
 	graphs := make([]*graph, k)
+	hasher := fnv.New64()
+	nodemap := map[uint64]*types.Node{}
+	nodeUIDs := make([]uint64, 0, lth)
+
+	for _, n := range nodes {
+		nodemap[n.ID] = n
+		nodeUIDs = append(nodeUIDs, n.ID)
+	}
+
 	for i := range graphs {
-		tmp := make([]*types.Node, lth)
-		copy(tmp, nodes)
-		rng.Shuffle(lth, func(i, j int) {
-			tmp[i], tmp[j] = tmp[j], tmp[i]
-		})
+		tmp := make([]uint64, lth)
+		copy(tmp, nodeUIDs)
+
 		g := &graph{
+			prefix:    byte(i),
 			observers: map[uint64]uint64{},
 			subjects:  map[uint64]uint64{},
 		}
+		sort.Slice(tmp, func(i, j int) bool {
+			ibuf := make([]byte, 9)
+			jbuf := make([]byte, 9)
+			ibuf[0] = g.prefix
+			jbuf[0] = g.prefix
+			binary.BigEndian.PutUint64(ibuf[1:], tmp[i])
+			binary.BigEndian.PutUint64(jbuf[1:], tmp[j])
+
+			_, _ = hasher.Write(ibuf)
+			isum := hasher.Sum64()
+			hasher.Reset()
+
+			_, _ = hasher.Write(jbuf)
+			jsum := hasher.Sum64()
+			return isum < jsum
+		})
+
 		for i := 0; i < lth-1; i++ {
-			g.add(tmp[i].ID, tmp[i+1].ID)
+			g.add(tmp[i], tmp[i+1])
 		}
-		g.add(tmp[lth-1].ID, tmp[0].ID)
+		g.add(tmp[lth-1], tmp[0])
 		graphs[i] = g
 	}
-	nodemap := map[uint64]*types.Node{}
-	for _, n := range nodes {
-		nodemap[n.ID] = n
-	}
-	// TODO there should be a test that good expander test was generated.
 	return &KGraph{
 		K:      k,
-		rng:    rng,
 		graphs: graphs,
 		nodes:  nodemap,
 	}
@@ -41,12 +62,14 @@ func NewKGraph(seed int64, k int, nodes []*types.Node) *KGraph {
 
 type KGraph struct {
 	K      int
-	rng    *rand.Rand
 	graphs []*graph
 	nodes  map[uint64]*types.Node
 }
 
 func (k *KGraph) IterateSubjects(u uint64, fn func(*types.Node) bool) {
+	_, exist := k.nodes[u]
+	if !exist {
+	}
 	for _, g := range k.graphs {
 		if !fn(k.nodes[g.subject(u)]) {
 			return
@@ -55,6 +78,9 @@ func (k *KGraph) IterateSubjects(u uint64, fn func(*types.Node) bool) {
 }
 
 func (k *KGraph) IterateObservers(v uint64, fn func(*types.Node) bool) {
+	_, exist := k.nodes[v]
+	if !exist {
+	}
 	for _, g := range k.graphs {
 		if !fn(k.nodes[g.observer(v)]) {
 			return
@@ -63,6 +89,8 @@ func (k *KGraph) IterateObservers(v uint64, fn func(*types.Node) bool) {
 }
 
 type graph struct {
+	prefix              byte
+	hasher              hash.Hash64
 	observers, subjects map[uint64]uint64
 }
 

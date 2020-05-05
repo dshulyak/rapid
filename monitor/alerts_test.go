@@ -21,7 +21,7 @@ func genNodes(n int) []*types.Node {
 }
 
 func TestAlertsCutDetectedFromAllAlerts(t *testing.T) {
-	kg := monitor.NewKGraph(100, 3, genNodes(4))
+	kg := monitor.NewKGraph(3, genNodes(4))
 	alerts := monitor.NewAlerts(zap.NewNop().Sugar(), kg, monitor.Config{
 		ID: 1,
 		LW: 3,
@@ -45,7 +45,7 @@ func TestAlertsCutDetectedFromAllAlerts(t *testing.T) {
 }
 
 func TestAlertsUnstableBlocking(t *testing.T) {
-	kg := monitor.NewKGraph(100, 8, genNodes(100))
+	kg := monitor.NewKGraph(8, genNodes(100))
 	alerts := monitor.NewAlerts(zap.NewNop().Sugar(), kg, monitor.Config{
 		ID: 1,
 		LW: 1,
@@ -89,7 +89,7 @@ func TestAlertsUnstableBlocking(t *testing.T) {
 }
 
 func TestAlertsUnstableObserver(t *testing.T) {
-	kg := monitor.NewKGraph(100, 8, genNodes(100))
+	kg := monitor.NewKGraph(8, genNodes(100))
 	hw := 8
 	alerts := monitor.NewAlerts(zap.NewNop().Sugar(), kg, monitor.Config{
 		ID: 1,
@@ -134,7 +134,7 @@ func TestAlertsUnstableObserver(t *testing.T) {
 }
 
 func TestAlertsPendingRecordedAlerts(t *testing.T) {
-	kg := monitor.NewKGraph(100, 8, genNodes(100))
+	kg := monitor.NewKGraph(8, genNodes(100))
 	alerts := monitor.NewAlerts(zap.NewNop().Sugar(), kg, monitor.Config{
 		ID: 1,
 		LW: 1,
@@ -156,7 +156,7 @@ func TestAlertsPendingRecordedAlerts(t *testing.T) {
 }
 
 func TestAlertsRetransmit(t *testing.T) {
-	kg := monitor.NewKGraph(100, 8, genNodes(100))
+	kg := monitor.NewKGraph(8, genNodes(100))
 	alerts := monitor.NewAlerts(zap.NewNop().Sugar(), kg, monitor.Config{
 		ID:                1,
 		LW:                1,
@@ -180,7 +180,7 @@ func TestAlertsRetransmit(t *testing.T) {
 }
 
 func TestAlertsReinforce(t *testing.T) {
-	kg := monitor.NewKGraph(100, 8, genNodes(100))
+	kg := monitor.NewKGraph(8, genNodes(100))
 	alerts := monitor.NewAlerts(zap.NewNop().Sugar(), kg, monitor.Config{
 		ID:               1,
 		LW:               1,
