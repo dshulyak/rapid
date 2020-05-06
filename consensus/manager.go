@@ -21,11 +21,18 @@ type ConsumeFn func(context.Context, *types.Message) error
 
 type Swarm interface {
 	Send(context.Context, *types.Message) error
-	Consume(context.Context, ConsumeFn) error
+	Register(ConsumeFn)
 	Update(*atypes.Changes) error
 }
 
 func NewManager(logger *zap.SugaredLogger, cons *Consensus, swarm Swarm) *Manager {
+	swarm.Register(func(_ context.Context, msg *types.Message) error {
+		// if context is nil and queue is full message will be dropped
+		if err := cons.Receive(nil, []*types.Message{msg}); err != nil {
+			cons.logger.Warn("consensus doesn't accept messages. error=", err)
+		}
+		return nil
+	})
 	return &Manager{
 		logger:    logger.Named("manager"),
 		consensus: cons,
@@ -79,21 +86,11 @@ func (m *Manager) Run(ctx context.Context) error {
 		}
 	})
 	group.Go(func() error {
-		return m.swarm.Consume(ctx, func(_ context.Context, msg *types.Message) error {
-			// if context is nil and queue is full message will be dropped
-			if err := m.consensus.Receive(nil, []*types.Message{msg}); err != nil {
-				m.logger.Warn("consensus doesn't accept messages. error=", err)
-			}
-			return nil
-		})
-	})
-	group.Go(func() error {
 		for {
 			select {
 			case <-ctx.Done():
 				return ctx.Err()
 			case vals := <-m.consensus.Learned():
-
 				m.bus.send(ctx, vals)
 			}
 		}

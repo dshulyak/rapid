@@ -2,29 +2,26 @@ package grpc
 
 import (
 	"context"
-	"errors"
 	"fmt"
-	"net"
 	"sync"
-	"sync/atomic"
 
 	"github.com/dshulyak/rapid/consensus"
-	"github.com/dshulyak/rapid/consensus/swarms/grpc/service"
+	"github.com/dshulyak/rapid/consensus/network/grpc/service"
+	ctypes "github.com/dshulyak/rapid/consensus/types"
 	"github.com/dshulyak/rapid/types"
+
 	"go.uber.org/zap"
 	"google.golang.org/grpc"
-
-	ctypes "github.com/dshulyak/rapid/consensus/types"
 )
 
-func New(logger *zap.SugaredLogger, node *types.Node, config *types.Configuration) *Swarm {
+func New(logger *zap.SugaredLogger, srv *grpc.Server, config *types.Configuration) *Swarm {
 	nodes := map[uint64]*types.Node{}
 	for _, n := range config.Nodes {
 		nodes[n.ID] = n
 	}
 	return &Swarm{
+		srv:    srv,
 		logger: logger.Named("grpc"),
-		node:   node,
 		config: nodes,
 		pool:   map[uint64]service.ConsensusClient{},
 	}
@@ -33,13 +30,10 @@ func New(logger *zap.SugaredLogger, node *types.Node, config *types.Configuratio
 // TODO big issue. connections are not closed.
 // define contracts for closing unused connections and general cleanup.
 type Swarm struct {
+	srv    *grpc.Server
 	logger *zap.SugaredLogger
 
-	node   *types.Node
 	config map[uint64]*types.Node
-
-	// consuming is set to 1 if consumer was started.
-	consuming int32
 
 	mu   sync.RWMutex
 	pool map[uint64]service.ConsensusClient
@@ -97,32 +91,9 @@ func (s *Swarm) Send(ctx context.Context, msg *ctypes.Message) error {
 	return err
 }
 
-func (s *Swarm) Consume(ctx context.Context, fn consensus.ConsumeFn) error {
-	if !atomic.CompareAndSwapInt32(&s.consuming, 0, 1) {
-		return errors.New("already consuming")
-	}
-	defer atomic.StoreInt32(&s.consuming, 0)
-
-	sock, err := net.Listen("tcp", fmt.Sprintf("%s:%d", s.node.IP, s.node.Port))
-	if err != nil {
-		return err
-	}
-
+func (s *Swarm) Register(fn consensus.ConsumeFn) {
 	// TODO pass server options during initialization
-	srv := grpc.NewServer()
-	service.RegisterConsensusServer(srv, consumer(fn))
-
-	errchan := make(chan error, 1)
-	go func() {
-		errchan <- srv.Serve(sock)
-	}()
-	select {
-	case <-ctx.Done():
-		srv.Stop()
-		return nil
-	case err := <-errchan:
-		return err
-	}
+	service.RegisterConsensusServer(s.srv, consumer(fn))
 }
 
 var _ service.ConsensusServer = (consumer)(nil)

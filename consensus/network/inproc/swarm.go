@@ -50,14 +50,12 @@ func (s *Swarm) Send(ctx context.Context, msg *types.Message) error {
 	return nil
 }
 
-func (s *Swarm) Consume(ctx context.Context, fn consensus.ConsumeFn) error {
-	//s.logger.Debug("register messages consumer")
+func (s *Swarm) Register(fn consensus.ConsumeFn) {
+	s.logger.Debug("register messages consumer")
 	s.network.register(s.id, func(ctx context.Context, msg *types.Message) error {
 		//s.logger.Debug("received=", msg)
 		return fn(ctx, msg)
 	})
-	<-ctx.Done()
-	return ctx.Err()
 }
 
 func newPipe(ctx context.Context, from, to uint64) *pipe {
