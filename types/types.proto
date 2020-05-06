@@ -11,7 +11,8 @@ message Node {
 }
 
 message Configuration {
-  repeated Node nodes = 1;
+  uint64 ID = 1;
+  repeated Node nodes = 2;
 }
 
 message Change {

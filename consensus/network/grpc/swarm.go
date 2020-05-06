@@ -92,7 +92,6 @@ func (s *Swarm) Send(ctx context.Context, msg *ctypes.Message) error {
 }
 
 func (s *Swarm) Register(fn consensus.ConsumeFn) {
-	// TODO pass server options during initialization
 	service.RegisterConsensusServer(s.srv, consumer(fn))
 }
 

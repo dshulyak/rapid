@@ -17,6 +17,7 @@ func NewAlertsReactor(logger *zap.SugaredLogger, period time.Duration, alerts *A
 		incoming: make(chan *mtypes.Alert, 1),
 		changes:  make(chan []*types.Change, 1),
 		outgoing: make(chan []*mtypes.Alert, 1),
+		graph:    make(chan *KGraph, 1),
 	}
 }
 
@@ -30,6 +31,12 @@ type AlertsReactor struct {
 
 	changes  chan []*types.Change
 	outgoing chan []*mtypes.Alert
+
+	graph chan *KGraph
+}
+
+func (r AlertsReactor) Update(kg *KGraph) {
+	r.graph <- kg
 }
 
 func (r AlertsReactor) Observe(ctx context.Context, alert *mtypes.Alert) error {
@@ -74,6 +81,8 @@ func (r AlertsReactor) Run(ctx context.Context) error {
 			changes = nil
 		case outchan <- outgoing:
 			outgoing = nil
+		case kg := <-r.graph:
+			r.Update(kg)
 		}
 		if len(changes) > 0 {
 			chchan = r.changes

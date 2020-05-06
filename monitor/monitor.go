@@ -14,31 +14,35 @@ type FailureDetector interface {
 	Monitor(context.Context, *types.Node) error
 }
 
-type AlertManager interface {
-	Observe(context.Context, *mtypes.Alert) error
-}
-
-func NewMonitor(logger *zap.SugaredLogger, id uint64, fd FailureDetector, am AlertManager, kg *KGraph) *Monitor {
-	gchan := make(chan *KGraph, 1)
-	gchan <- kg
-	return &Monitor{
+func NewMonitor(logger *zap.SugaredLogger, id uint64, fd FailureDetector, am AlertsReactor, kg *KGraph) *Monitor {
+	mon := &Monitor{
 		logger: logger,
 		id:     id,
 		fd:     fd,
 		am:     am,
-		graph:  gchan,
+		graph:  make(chan *KGraph, 1),
 	}
+	mon.Update(kg)
+	return mon
 }
 
 type Monitor struct {
 	logger *zap.SugaredLogger
 	id     uint64
 	fd     FailureDetector
-	am     AlertManager
+	am     AlertsReactor
 
 	graph chan *KGraph
 }
 
+func (m *Monitor) Update(kg *KGraph) {
+	m.graph <- kg
+}
+
+// Run monitors subjects from the KGraph.
+// Failure detection logic is uncapsulated in the FailureDetector component,
+// once it fires - detection is irreversible and will be propagated accross the network.
+// Will exit only if interrupted by context.
 func (m *Monitor) Run(ctx context.Context) error {
 	var (
 		group sync.WaitGroup

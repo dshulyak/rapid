@@ -1,6 +1,8 @@
 package monitor
 
 import (
+	"time"
+
 	mtypes "github.com/dshulyak/rapid/monitor/types"
 	"github.com/dshulyak/rapid/types"
 	"go.uber.org/zap"
@@ -8,7 +10,9 @@ import (
 
 type Config struct {
 	ID                uint64
+	K                 int
 	LW, HW            int
+	TimeoutPeriod     time.Duration
 	ReinforceTimeout  int
 	RetransmitTimeout int
 }
