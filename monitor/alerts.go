@@ -128,11 +128,13 @@ func (a *Alerts) Observe(alert *mtypes.Alert) {
 		a.pending = append(a.pending, alert)
 		a.alerts = append(a.alerts, alert)
 	}
+
 	observed := a.observed[alert.Subject]
 	if observed == nil {
 		observed = &observedAlert{change: alert.Change, id: alert.Subject, received: map[uint64]struct{}{}}
 		a.observed[alert.Subject] = observed
 	}
+
 	if observed.detected {
 		return
 	}
@@ -149,7 +151,7 @@ func (a *Alerts) Observe(alert *mtypes.Alert) {
 	// [lw, hw)
 	if count >= a.lw && count < a.hw {
 		// check if observers of the unstable subject are unstable themself
-		// if they are count them implicitly
+		// if they are - count them implicitly
 		a.kg.IterateObservers(alert.Subject, func(n *types.Node) bool {
 			other := a.observed[n.ID]
 			if other == nil {
@@ -167,6 +169,7 @@ func (a *Alerts) Observe(alert *mtypes.Alert) {
 			}
 			return true
 		})
+		// reverse check. observer detected to be unstable, subjects needs to be updated
 		a.kg.IterateSubjects(alert.Subject, func(n *types.Node) bool {
 			subject, exist := a.observed[n.ID]
 			if !exist {
@@ -186,7 +189,7 @@ func (a *Alerts) Observe(alert *mtypes.Alert) {
 		})
 	}
 
-	// pick list of candidates, but only if there is no unstable alert
+	// pick list of candidates, but detect them only if all of them are stable
 	var candidates []*observedAlert
 	for _, other := range a.observed {
 		othercnt := 0

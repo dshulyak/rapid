@@ -207,3 +207,29 @@ func TestAlertsReinforce(t *testing.T) {
 	require.Equal(t, 1, int(pending[0].Observer))
 	require.Equal(t, alert.Change, pending[0].Change)
 }
+
+func TestJoinedNonexisting(t *testing.T) {
+	kg := monitor.NewKGraph(8, genNodes(100))
+	alerts := monitor.NewAlerts(zap.NewNop().Sugar(), kg, monitor.Config{
+		ID: 1,
+		LW: 1,
+		HW: 8,
+	})
+
+	joiner := uint64(1000)
+	kg.IterateObservers(joiner, func(n *types.Node) bool {
+		alerts.Observe(&mtypes.Alert{
+			Observer: n.ID,
+			Subject:  joiner,
+			Change: &types.Change{
+				Type: types.Change_JOIN,
+				Node: &types.Node{ID: joiner},
+			},
+		})
+		return true
+	})
+
+	changes := alerts.DetectedCut()
+	require.Len(t, changes, 1)
+	require.Equal(t, joiner, changes[0].Node.ID)
+}

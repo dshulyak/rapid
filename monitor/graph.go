@@ -1,7 +1,6 @@
 package monitor
 
 import (
-	"hash"
 	"sort"
 
 	"github.com/dshulyak/rapid/types"
@@ -24,6 +23,7 @@ func NewKGraph(k int, nodes []*types.Node) *KGraph {
 
 		g := &graph{
 			seed:      uint8(i + 1),
+			ordered:   tmp,
 			observers: map[uint64]uint64{},
 			subjects:  map[uint64]uint64{},
 		}
@@ -51,9 +51,6 @@ type KGraph struct {
 }
 
 func (k *KGraph) IterateSubjects(u uint64, fn func(*types.Node) bool) {
-	_, exist := k.nodes[u]
-	if !exist {
-	}
 	for _, g := range k.graphs {
 		if !fn(k.nodes[g.subject(u)]) {
 			return
@@ -62,9 +59,6 @@ func (k *KGraph) IterateSubjects(u uint64, fn func(*types.Node) bool) {
 }
 
 func (k *KGraph) IterateObservers(v uint64, fn func(*types.Node) bool) {
-	_, exist := k.nodes[v]
-	if !exist {
-	}
 	for _, g := range k.graphs {
 		if !fn(k.nodes[g.observer(v)]) {
 			return
@@ -74,8 +68,36 @@ func (k *KGraph) IterateObservers(v uint64, fn func(*types.Node) bool) {
 
 type graph struct {
 	seed                uint8
-	hasher              hash.Hash64
+	ordered             []uint64
 	observers, subjects map[uint64]uint64
+}
+
+// closestLeft returns left peer on the ring.
+func (g *graph) closestLeft(u uint64) uint64 {
+	return g.closest(u, func(x, y uint64) bool {
+		return x > y
+	})
+}
+
+// closestRight returns first right peer from the ring.
+func (g *graph) closestRight(u uint64) uint64 {
+	return g.closest(u, func(x, y uint64) bool {
+		return x < y
+	})
+}
+
+func (g *graph) closest(u uint64, cmp func(x, y uint64) bool) uint64 {
+	i := 0
+	hu := fnvhash64(g.seed, u)
+	for i = range g.ordered {
+		if cmp(hu, fnvhash64(g.seed, g.ordered[i])) {
+			break
+		}
+	}
+	if i == 0 {
+		return g.ordered[len(g.ordered)-1]
+	}
+	return g.ordered[i]
 }
 
 func (g *graph) add(u, v uint64) {
@@ -84,11 +106,17 @@ func (g *graph) add(u, v uint64) {
 }
 
 func (g *graph) subject(u uint64) uint64 {
-	return g.subjects[u]
+	if v, exist := g.subjects[u]; exist {
+		return v
+	}
+	return g.closestRight(u)
 }
 
 func (g *graph) observer(v uint64) uint64 {
-	return g.observers[v]
+	if u, exist := g.observers[v]; exist {
+		return u
+	}
+	return g.closestLeft(v)
 }
 
 // fnv-1 hash
