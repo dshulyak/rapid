@@ -20,7 +20,11 @@ message JoinResponse {
   Status status = 1;
 };
 
+message BroadcastRequest {
+  repeated types.Alert alerts = 1;
+}
+
 service Monitor {
-  rpc Broadcast(types.Alert) returns (Empty) {}
+  rpc Broadcast(BroadcastRequest) returns (Empty) {}
   rpc Join(JoinRequest) returns (JoinResponse) {}
 }

@@ -39,8 +39,13 @@ func (net NetworkHandler) Join(ctx context.Context, configID uint64, node *types
 	})
 }
 
-func (net NetworkHandler) Broadcast(ctx context.Context, alert *mtypes.Alert) error {
-	return net.alerts.Observe(ctx, alert)
+func (net NetworkHandler) Broadcast(ctx context.Context, alerts []*mtypes.Alert) error {
+	for _, alerts := range alerts {
+		if err := net.alerts.Observe(ctx, alerts); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func (net NetworkHandler) UpdateConfigID(id uint64) {
@@ -50,7 +55,7 @@ func (net NetworkHandler) UpdateConfigID(id uint64) {
 type Network interface {
 	Register(NetworkHandler)
 
-	// NOTE broadcasting topology depends on the kgraph, it won't be required
+	// NOTE broadcasting topology depends on the kgraph
 	Update(*KGraph)
 	Broadcast(context.Context, <-chan []*mtypes.Alert) error
 
