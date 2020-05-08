@@ -11,12 +11,14 @@ import (
 	"go.uber.org/zap"
 	"golang.org/x/sync/errgroup"
 
+	network "github.com/dshulyak/rapid/network/inproc"
+
 	atypes "github.com/dshulyak/rapid/types"
 )
 
 func NewCluster(n int, tick time.Duration, jitter int64) *Cluster {
 	logger := testLogger()
-	network := inproc.NewNetwork()
+	network := network.NewNetwork()
 
 	conf := &atypes.Configuration{}
 	for i := 1; i <= n; i++ {
@@ -63,7 +65,7 @@ type Cluster struct {
 	logger *zap.SugaredLogger
 
 	size    int
-	network *inproc.Network
+	network *network.Network
 
 	managers map[uint64]*consensus.Manager
 }
