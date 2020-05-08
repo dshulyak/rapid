@@ -126,9 +126,9 @@ func (a *Alerts) Observe(alert *mtypes.Alert) {
 
 	// record alert from our node in both sets, for sending and retransmission
 	if alert.Observer == a.id {
-		a.pending = append(a.pending, alert)
 		a.alerts = append(a.alerts, alert)
 	}
+	a.pending = append(a.pending, alert)
 
 	observed := a.observed[alert.Subject]
 	if observed == nil {

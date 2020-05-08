@@ -78,8 +78,10 @@ func (r AlertsReactor) Run(ctx context.Context) error {
 			changes = append(changes, r.alerts.DetectedCut()...)
 			outgoing = append(outgoing, r.alerts.Pending()...)
 		case chchan <- changes:
+			chchan = nil
 			changes = nil
 		case outchan <- outgoing:
+			outchan = nil
 			outgoing = nil
 		case kg := <-r.graph:
 			r.Update(kg)

@@ -52,10 +52,11 @@ func (s *Service) Broadcast(ctx context.Context, alertsch <-chan []*mtypes.Alert
 			}
 			kg.IterateObservers(s.id, func(n *types.Node) bool {
 				_ = s.network.Send(inproc.Request{
-					From:   s.id,
-					To:     n.ID,
-					Object: alerts,
-					Code:   broadcastCode,
+					Context: ctx,
+					From:    s.id,
+					To:      n.ID,
+					Object:  alerts,
+					Code:    broadcastCode,
 				})
 				return true
 			})
