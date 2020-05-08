@@ -42,12 +42,20 @@ func (s *Swarm) Send(ctx context.Context, msg *types.Message) error {
 	if msg.From == msg.To {
 		return fmt.Errorf("sending message to the same node not supported %d", msg.From)
 	}
-	return s.network.Send(ctx, msg.From, msg.To, sendCode, msg)
+	req := inproc.Request{
+		Context: ctx,
+		From:    msg.From,
+		To:      msg.To,
+		Code:    sendCode,
+		Object:  msg,
+	}
+	return s.network.Send(req)
 }
 
 func (s *Swarm) Register(fn consensus.ConsumeFn) {
 	s.logger.Debug("register messages consumer")
-	s.network.Register(s.id, sendCode, func(ctx context.Context, msg interface{}) {
+	s.network.Register(s.id, sendCode, func(ctx context.Context, msg interface{}) *inproc.Response {
 		fn(ctx, msg.(*types.Message))
+		return nil
 	})
 }

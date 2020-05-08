@@ -7,12 +7,19 @@ import (
 	"sync"
 )
 
-type Handler func(context.Context, interface{})
+type Handler func(context.Context, interface{}) *Response
 
-type request struct {
-	ctx    context.Context
-	code   uint64
-	object interface{}
+type Request struct {
+	context.Context
+	From, To uint64
+	Code     uint64
+	Object   interface{}
+	Response chan<- *Response
+}
+
+type Response struct {
+	Object interface{}
+	Err    error
 }
 
 func newPipe(ctx context.Context, from, to uint64) *pipe {
@@ -21,20 +28,20 @@ func newPipe(ctx context.Context, from, to uint64) *pipe {
 		from: from,
 		to:   to,
 		// TODO reconsider using two buffers when framework will be extended with error conditions
-		messages: make(chan request, 10),
+		messages: make(chan Request, 10),
 	}
 }
 
 type pipe struct {
 	ctx      context.Context
 	from, to uint64
-	messages chan request
+	messages chan Request
 }
 
-func (p *pipe) send(ctx context.Context, msg request) error {
+func (p *pipe) send(msg Request) error {
 	select {
-	case <-ctx.Done():
-		return ctx.Err()
+	case <-msg.Done():
+		return msg.Err()
 	case p.messages <- msg:
 		return nil
 	}
@@ -47,11 +54,14 @@ func (p *pipe) run(handlers map[uint64]Handler) {
 		case <-p.ctx.Done():
 			return
 		case msg := <-p.messages:
-			handler, exist := handlers[msg.code]
+			handler, exist := handlers[msg.Code]
 			if exist {
-				handler(msg.ctx, msg.object)
+				resp := handler(msg, msg.Object)
+				if msg.Response != nil {
+					msg.Response <- resp
+				}
 			} else {
-				panic(fmt.Sprintf("handler for code %d not registered", msg.code))
+				panic(fmt.Sprintf("handler for code %d not registered", msg.Code))
 			}
 		}
 	}
@@ -96,16 +106,13 @@ func (n *Network) Stop() {
 	n.wg.Wait()
 }
 
-func (n *Network) Send(ctx context.Context, from, to, code uint64, msg interface{}) error {
-	p, err := n.connect(from, to)
+func (n *Network) Send(req Request) error {
+	p, err := n.connect(req.From, req.To)
 	if err != nil {
 		return err
 	}
 
-	if err := p.send(ctx, request{
-		code:   code,
-		object: msg,
-	}); err != nil {
+	if err := p.send(req); err != nil {
 		return err
 	}
 	return nil
