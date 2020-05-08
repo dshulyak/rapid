@@ -10,6 +10,7 @@ import (
 
 type Config struct {
 	ID                uint64
+	Node              *types.Node
 	K                 int
 	LW, HW            int
 	TimeoutPeriod     time.Duration

@@ -9,8 +9,8 @@ import (
 	"go.uber.org/zap"
 )
 
-func NewAlertsReactor(logger *zap.SugaredLogger, period time.Duration, alerts *Alerts) *AlertsReactor {
-	return &AlertsReactor{
+func NewAlertsReactor(logger *zap.SugaredLogger, period time.Duration, alerts *Alerts) AlertsReactor {
+	return AlertsReactor{
 		logger:   logger,
 		period:   period,
 		alerts:   alerts,
