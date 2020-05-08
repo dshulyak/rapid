@@ -2,6 +2,7 @@ package grpc
 
 import (
 	"context"
+	"errors"
 	"fmt"
 
 	"github.com/dshulyak/rapid/monitor"
@@ -10,12 +11,16 @@ import (
 	"google.golang.org/grpc"
 )
 
-type Network struct {
+type Service struct {
 	Broadcaster
 	srv *grpc.Server
 }
 
-func (n Network) Join(ctx context.Context, configID uint64, observer, subject *types.Node) error {
+func (s *Service) Register(handler monitor.NetworkHandler) {
+	service.RegisterMonitorServer(s.srv, handlerWrapper{handler})
+}
+
+func (n Service) Join(ctx context.Context, configID uint64, observer, subject *types.Node) error {
 	conn, err := grpc.DialContext(ctx, fmt.Sprintf("%s:%d", observer.IP, observer.Port))
 	if err != nil {
 		return err
@@ -36,4 +41,25 @@ func (n Network) Join(ctx context.Context, configID uint64, observer, subject *t
 		return monitor.ErrOutdatedConfigID
 	}
 	return fmt.Errorf("unknown join status %v", rsp.Status)
+}
+
+type handlerWrapper struct {
+	handler monitor.NetworkHandler
+}
+
+func (w handlerWrapper) Join(ctx context.Context, req *service.JoinRequest) (*service.JoinResponse, error) {
+	status := service.JoinResponse_OK
+	err := w.handler.Join(ctx, req.ConfigurationID, req.Node)
+	if err != nil {
+		if errors.Is(err, monitor.ErrOutdatedConfigID) {
+			status = service.JoinResponse_OLD_CONFIGURATION_ID
+		} else {
+			return nil, err
+		}
+	}
+	return &service.JoinResponse{Status: status}, nil
+}
+
+func (w handlerWrapper) Broadcast(ctx context.Context, req *service.BroadcastRequest) (*service.Empty, error) {
+	return nil, w.handler.Broadcast(ctx, req.Alerts)
 }
