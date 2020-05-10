@@ -13,7 +13,7 @@ import (
 
 var _ monitor.FailureDetector = FailureDetector{}
 
-func NewFailureDetector(logger *zap.SugaredLogger, period, timeout time.Duration, threshold int) FailureDetector {
+func New(logger *zap.SugaredLogger, period, timeout time.Duration, threshold int) FailureDetector {
 	return FailureDetector{
 		logger:    logger,
 		period:    period,

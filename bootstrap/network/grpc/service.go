@@ -27,14 +27,14 @@ type wrapper struct {
 	*bootstrap.Service
 }
 
-func (w wrapper) Join(ctx context.Context, req *service.JoinRequest) (*service.JoinResponse, error) {
+func (w wrapper) Join(ctx context.Context, req *service.BootstrapRequest) (*service.BootstrapResponse, error) {
 	conf, err := w.Service.Join(ctx, req.NodeID)
 	if err != nil {
 		if errors.Is(err, bootstrap.ErrNodeIDConflict) {
-			return &service.JoinResponse{Status: service.JoinResponse_NODE_ID_CONFLICT}, nil
+			return &service.BootstrapResponse{Status: service.BootstrapResponse_NODE_ID_CONFLICT}, nil
 		}
 	}
-	return &service.JoinResponse{
+	return &service.BootstrapResponse{
 		Configuration: conf,
 	}, nil
 }

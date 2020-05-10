@@ -27,47 +27,47 @@ var _ = math.Inf
 // proto package needs to be updated.
 const _ = proto.GoGoProtoPackageIsVersion3 // please upgrade the proto package
 
-type JoinResponse_Status int32
+type BootstrapResponse_Status int32
 
 const (
-	JoinResponse_OK               JoinResponse_Status = 0
-	JoinResponse_NODE_ID_CONFLICT JoinResponse_Status = 1
+	BootstrapResponse_OK               BootstrapResponse_Status = 0
+	BootstrapResponse_NODE_ID_CONFLICT BootstrapResponse_Status = 1
 )
 
-var JoinResponse_Status_name = map[int32]string{
+var BootstrapResponse_Status_name = map[int32]string{
 	0: "OK",
 	1: "NODE_ID_CONFLICT",
 }
 
-var JoinResponse_Status_value = map[string]int32{
+var BootstrapResponse_Status_value = map[string]int32{
 	"OK":               0,
 	"NODE_ID_CONFLICT": 1,
 }
 
-func (x JoinResponse_Status) String() string {
-	return proto.EnumName(JoinResponse_Status_name, int32(x))
+func (x BootstrapResponse_Status) String() string {
+	return proto.EnumName(BootstrapResponse_Status_name, int32(x))
 }
 
-func (JoinResponse_Status) EnumDescriptor() ([]byte, []int) {
+func (BootstrapResponse_Status) EnumDescriptor() ([]byte, []int) {
 	return fileDescriptor_a4d4b9ab57de1540, []int{1, 0}
 }
 
-type JoinRequest struct {
+type BootstrapRequest struct {
 	NodeID uint64 `protobuf:"varint,1,opt,name=nodeID,proto3" json:"nodeID,omitempty"`
 }
 
-func (m *JoinRequest) Reset()         { *m = JoinRequest{} }
-func (m *JoinRequest) String() string { return proto.CompactTextString(m) }
-func (*JoinRequest) ProtoMessage()    {}
-func (*JoinRequest) Descriptor() ([]byte, []int) {
+func (m *BootstrapRequest) Reset()         { *m = BootstrapRequest{} }
+func (m *BootstrapRequest) String() string { return proto.CompactTextString(m) }
+func (*BootstrapRequest) ProtoMessage()    {}
+func (*BootstrapRequest) Descriptor() ([]byte, []int) {
 	return fileDescriptor_a4d4b9ab57de1540, []int{0}
 }
-func (m *JoinRequest) XXX_Unmarshal(b []byte) error {
+func (m *BootstrapRequest) XXX_Unmarshal(b []byte) error {
 	return m.Unmarshal(b)
 }
-func (m *JoinRequest) XXX_Marshal(b []byte, deterministic bool) ([]byte, error) {
+func (m *BootstrapRequest) XXX_Marshal(b []byte, deterministic bool) ([]byte, error) {
 	if deterministic {
-		return xxx_messageInfo_JoinRequest.Marshal(b, m, deterministic)
+		return xxx_messageInfo_BootstrapRequest.Marshal(b, m, deterministic)
 	} else {
 		b = b[:cap(b)]
 		n, err := m.MarshalToSizedBuffer(b)
@@ -77,42 +77,42 @@ func (m *JoinRequest) XXX_Marshal(b []byte, deterministic bool) ([]byte, error) 
 		return b[:n], nil
 	}
 }
-func (m *JoinRequest) XXX_Merge(src proto.Message) {
-	xxx_messageInfo_JoinRequest.Merge(m, src)
+func (m *BootstrapRequest) XXX_Merge(src proto.Message) {
+	xxx_messageInfo_BootstrapRequest.Merge(m, src)
 }
-func (m *JoinRequest) XXX_Size() int {
+func (m *BootstrapRequest) XXX_Size() int {
 	return m.Size()
 }
-func (m *JoinRequest) XXX_DiscardUnknown() {
-	xxx_messageInfo_JoinRequest.DiscardUnknown(m)
+func (m *BootstrapRequest) XXX_DiscardUnknown() {
+	xxx_messageInfo_BootstrapRequest.DiscardUnknown(m)
 }
 
-var xxx_messageInfo_JoinRequest proto.InternalMessageInfo
+var xxx_messageInfo_BootstrapRequest proto.InternalMessageInfo
 
-func (m *JoinRequest) GetNodeID() uint64 {
+func (m *BootstrapRequest) GetNodeID() uint64 {
 	if m != nil {
 		return m.NodeID
 	}
 	return 0
 }
 
-type JoinResponse struct {
-	Status        JoinResponse_Status  `protobuf:"varint,1,opt,name=status,proto3,enum=JoinResponse_Status" json:"status,omitempty"`
-	Configuration *types.Configuration `protobuf:"bytes,2,opt,name=configuration,proto3" json:"configuration,omitempty"`
+type BootstrapResponse struct {
+	Status        BootstrapResponse_Status `protobuf:"varint,1,opt,name=status,proto3,enum=BootstrapResponse_Status" json:"status,omitempty"`
+	Configuration *types.Configuration     `protobuf:"bytes,2,opt,name=configuration,proto3" json:"configuration,omitempty"`
 }
 
-func (m *JoinResponse) Reset()         { *m = JoinResponse{} }
-func (m *JoinResponse) String() string { return proto.CompactTextString(m) }
-func (*JoinResponse) ProtoMessage()    {}
-func (*JoinResponse) Descriptor() ([]byte, []int) {
+func (m *BootstrapResponse) Reset()         { *m = BootstrapResponse{} }
+func (m *BootstrapResponse) String() string { return proto.CompactTextString(m) }
+func (*BootstrapResponse) ProtoMessage()    {}
+func (*BootstrapResponse) Descriptor() ([]byte, []int) {
 	return fileDescriptor_a4d4b9ab57de1540, []int{1}
 }
-func (m *JoinResponse) XXX_Unmarshal(b []byte) error {
+func (m *BootstrapResponse) XXX_Unmarshal(b []byte) error {
 	return m.Unmarshal(b)
 }
-func (m *JoinResponse) XXX_Marshal(b []byte, deterministic bool) ([]byte, error) {
+func (m *BootstrapResponse) XXX_Marshal(b []byte, deterministic bool) ([]byte, error) {
 	if deterministic {
-		return xxx_messageInfo_JoinResponse.Marshal(b, m, deterministic)
+		return xxx_messageInfo_BootstrapResponse.Marshal(b, m, deterministic)
 	} else {
 		b = b[:cap(b)]
 		n, err := m.MarshalToSizedBuffer(b)
@@ -122,26 +122,26 @@ func (m *JoinResponse) XXX_Marshal(b []byte, deterministic bool) ([]byte, error)
 		return b[:n], nil
 	}
 }
-func (m *JoinResponse) XXX_Merge(src proto.Message) {
-	xxx_messageInfo_JoinResponse.Merge(m, src)
+func (m *BootstrapResponse) XXX_Merge(src proto.Message) {
+	xxx_messageInfo_BootstrapResponse.Merge(m, src)
 }
-func (m *JoinResponse) XXX_Size() int {
+func (m *BootstrapResponse) XXX_Size() int {
 	return m.Size()
 }
-func (m *JoinResponse) XXX_DiscardUnknown() {
-	xxx_messageInfo_JoinResponse.DiscardUnknown(m)
+func (m *BootstrapResponse) XXX_DiscardUnknown() {
+	xxx_messageInfo_BootstrapResponse.DiscardUnknown(m)
 }
 
-var xxx_messageInfo_JoinResponse proto.InternalMessageInfo
+var xxx_messageInfo_BootstrapResponse proto.InternalMessageInfo
 
-func (m *JoinResponse) GetStatus() JoinResponse_Status {
+func (m *BootstrapResponse) GetStatus() BootstrapResponse_Status {
 	if m != nil {
 		return m.Status
 	}
-	return JoinResponse_OK
+	return BootstrapResponse_OK
 }
 
-func (m *JoinResponse) GetConfiguration() *types.Configuration {
+func (m *BootstrapResponse) GetConfiguration() *types.Configuration {
 	if m != nil {
 		return m.Configuration
 	}
@@ -149,9 +149,9 @@ func (m *JoinResponse) GetConfiguration() *types.Configuration {
 }
 
 func init() {
-	proto.RegisterEnum("JoinResponse_Status", JoinResponse_Status_name, JoinResponse_Status_value)
-	proto.RegisterType((*JoinRequest)(nil), "JoinRequest")
-	proto.RegisterType((*JoinResponse)(nil), "JoinResponse")
+	proto.RegisterEnum("BootstrapResponse_Status", BootstrapResponse_Status_name, BootstrapResponse_Status_value)
+	proto.RegisterType((*BootstrapRequest)(nil), "BootstrapRequest")
+	proto.RegisterType((*BootstrapResponse)(nil), "BootstrapResponse")
 }
 
 func init() {
@@ -163,22 +163,22 @@ var fileDescriptor_a4d4b9ab57de1540 = []byte{
 	0x1f, 0x8b, 0x08, 0x00, 0x00, 0x00, 0x00, 0x00, 0x02, 0xff, 0xe2, 0xd2, 0x49, 0xca, 0xcf, 0x2f,
 	0x29, 0x2e, 0x29, 0x4a, 0x2c, 0xd0, 0xcf, 0x4b, 0x2d, 0x29, 0xcf, 0x2f, 0xca, 0xd6, 0x4f, 0x2f,
 	0x2a, 0x48, 0xd6, 0x2f, 0x4e, 0x2d, 0x2a, 0xcb, 0x4c, 0x4e, 0x85, 0xd1, 0x7a, 0x05, 0x45, 0xf9,
-	0x25, 0xf9, 0x52, 0x82, 0x25, 0x95, 0x05, 0xa9, 0xc5, 0xfa, 0x60, 0x12, 0x22, 0xa4, 0xa4, 0xca,
-	0xc5, 0xed, 0x95, 0x9f, 0x99, 0x17, 0x94, 0x5a, 0x58, 0x9a, 0x5a, 0x5c, 0x22, 0x24, 0xc6, 0xc5,
-	0x96, 0x97, 0x9f, 0x92, 0xea, 0xe9, 0x22, 0xc1, 0xa8, 0xc0, 0xa8, 0xc1, 0x12, 0x04, 0xe5, 0x29,
-	0x2d, 0x60, 0xe4, 0xe2, 0x81, 0xa8, 0x2b, 0x2e, 0xc8, 0xcf, 0x2b, 0x4e, 0x15, 0xd2, 0xe1, 0x62,
-	0x2b, 0x2e, 0x49, 0x2c, 0x29, 0x2d, 0x06, 0x2b, 0xe4, 0x33, 0x12, 0xd1, 0x43, 0x96, 0xd6, 0x0b,
-	0x06, 0xcb, 0x05, 0x41, 0xd5, 0x08, 0x59, 0x71, 0xf1, 0x26, 0xe7, 0xe7, 0xa5, 0x65, 0xa6, 0x97,
-	0x16, 0x25, 0x96, 0x64, 0xe6, 0xe7, 0x49, 0x30, 0x29, 0x30, 0x6a, 0x70, 0x1b, 0x89, 0xe8, 0x41,
-	0x9c, 0xe2, 0x8c, 0x2c, 0x17, 0x84, 0xaa, 0x54, 0x49, 0x8d, 0x8b, 0x0d, 0x62, 0x9a, 0x10, 0x1b,
-	0x17, 0x93, 0xbf, 0xb7, 0x00, 0x83, 0x90, 0x08, 0x97, 0x80, 0x9f, 0xbf, 0x8b, 0x6b, 0xbc, 0xa7,
-	0x4b, 0xbc, 0xb3, 0xbf, 0x9f, 0x9b, 0x8f, 0xa7, 0x73, 0x88, 0x00, 0xa3, 0x91, 0x11, 0x17, 0xa7,
-	0x13, 0x2c, 0x30, 0x84, 0x54, 0xb9, 0x58, 0x40, 0xee, 0x11, 0xe2, 0xd1, 0x43, 0xf2, 0x9d, 0x14,
-	0x2f, 0x8a, 0x23, 0x95, 0x18, 0x9c, 0x82, 0x4e, 0x3c, 0x92, 0x63, 0xbc, 0xf0, 0x48, 0x8e, 0xf1,
-	0xc1, 0x23, 0x39, 0xc6, 0x09, 0x8f, 0xe5, 0x18, 0x2e, 0x3c, 0x96, 0x63, 0xb8, 0xf1, 0x58, 0x8e,
-	0x21, 0xca, 0x22, 0x3d, 0xb3, 0x24, 0xa3, 0x34, 0x49, 0x2f, 0x39, 0x3f, 0x57, 0x3f, 0xa5, 0x38,
-	0xa3, 0x34, 0xa7, 0x32, 0x31, 0x5b, 0xbf, 0x28, 0xb1, 0x20, 0x33, 0x45, 0x1f, 0x7f, 0x90, 0x27,
-	0xb1, 0x81, 0x03, 0xd6, 0x18, 0x10, 0x00, 0x00, 0xff, 0xff, 0xcf, 0x08, 0x3f, 0x16, 0x9b, 0x01,
+	0x25, 0xf9, 0x52, 0x82, 0x25, 0x95, 0x05, 0xa9, 0xc5, 0xfa, 0x60, 0x12, 0x22, 0xa4, 0xa4, 0xc5,
+	0x25, 0xe0, 0x04, 0x33, 0x22, 0x28, 0xb5, 0xb0, 0x34, 0xb5, 0xb8, 0x44, 0x48, 0x8c, 0x8b, 0x2d,
+	0x2f, 0x3f, 0x25, 0xd5, 0xd3, 0x45, 0x82, 0x51, 0x81, 0x51, 0x83, 0x25, 0x08, 0xca, 0x53, 0x5a,
+	0xc5, 0xc8, 0x25, 0x88, 0xa4, 0xb8, 0xb8, 0x20, 0x3f, 0xaf, 0x38, 0x55, 0xc8, 0x90, 0x8b, 0xad,
+	0xb8, 0x24, 0xb1, 0xa4, 0xb4, 0x18, 0xac, 0x9a, 0xcf, 0x48, 0x52, 0x0f, 0x43, 0x8d, 0x5e, 0x30,
+	0x58, 0x41, 0x10, 0x54, 0xa1, 0x90, 0x15, 0x17, 0x6f, 0x72, 0x7e, 0x5e, 0x5a, 0x66, 0x7a, 0x69,
+	0x51, 0x62, 0x49, 0x66, 0x7e, 0x9e, 0x04, 0x93, 0x02, 0xa3, 0x06, 0xb7, 0x91, 0x88, 0x1e, 0xc4,
+	0x65, 0xce, 0xc8, 0x72, 0x41, 0xa8, 0x4a, 0x95, 0xd4, 0xb8, 0xd8, 0x20, 0xa6, 0x09, 0xb1, 0x71,
+	0x31, 0xf9, 0x7b, 0x0b, 0x30, 0x08, 0x89, 0x70, 0x09, 0xf8, 0xf9, 0xbb, 0xb8, 0xc6, 0x7b, 0xba,
+	0xc4, 0x3b, 0xfb, 0xfb, 0xb9, 0xf9, 0x78, 0x3a, 0x87, 0x08, 0x30, 0x1a, 0xd9, 0x70, 0x71, 0xc2,
+	0xdd, 0x21, 0xa4, 0xcf, 0xc5, 0xe2, 0x95, 0x9f, 0x99, 0x27, 0x24, 0xa8, 0x87, 0xee, 0x59, 0x29,
+	0x21, 0x4c, 0xe7, 0x2a, 0x31, 0x38, 0x05, 0x9d, 0x78, 0x24, 0xc7, 0x78, 0xe1, 0x91, 0x1c, 0xe3,
+	0x83, 0x47, 0x72, 0x8c, 0x13, 0x1e, 0xcb, 0x31, 0x5c, 0x78, 0x2c, 0xc7, 0x70, 0xe3, 0xb1, 0x1c,
+	0x43, 0x94, 0x45, 0x7a, 0x66, 0x49, 0x46, 0x69, 0x92, 0x5e, 0x72, 0x7e, 0xae, 0x7e, 0x4a, 0x71,
+	0x46, 0x69, 0x4e, 0x65, 0x62, 0xb6, 0x7e, 0x51, 0x62, 0x41, 0x66, 0x8a, 0x3e, 0xfe, 0xb8, 0x48,
+	0x62, 0x03, 0x87, 0xb8, 0x31, 0x20, 0x00, 0x00, 0xff, 0xff, 0xb3, 0x61, 0xd8, 0x92, 0xb4, 0x01,
 	0x00, 0x00,
 }
 
@@ -194,7 +194,7 @@ const _ = grpc.SupportPackageIsVersion4
 //
 // For semantics around ctx use and closing/ending streaming RPCs, please refer to https://godoc.org/google.golang.org/grpc#ClientConn.NewStream.
 type BootstrapClient interface {
-	Join(ctx context.Context, in *JoinRequest, opts ...grpc.CallOption) (*JoinResponse, error)
+	Join(ctx context.Context, in *BootstrapRequest, opts ...grpc.CallOption) (*BootstrapResponse, error)
 }
 
 type bootstrapClient struct {
@@ -205,8 +205,8 @@ func NewBootstrapClient(cc *grpc.ClientConn) BootstrapClient {
 	return &bootstrapClient{cc}
 }
 
-func (c *bootstrapClient) Join(ctx context.Context, in *JoinRequest, opts ...grpc.CallOption) (*JoinResponse, error) {
-	out := new(JoinResponse)
+func (c *bootstrapClient) Join(ctx context.Context, in *BootstrapRequest, opts ...grpc.CallOption) (*BootstrapResponse, error) {
+	out := new(BootstrapResponse)
 	err := c.cc.Invoke(ctx, "/Bootstrap/Join", in, out, opts...)
 	if err != nil {
 		return nil, err
@@ -216,14 +216,14 @@ func (c *bootstrapClient) Join(ctx context.Context, in *JoinRequest, opts ...grp
 
 // BootstrapServer is the server API for Bootstrap service.
 type BootstrapServer interface {
-	Join(context.Context, *JoinRequest) (*JoinResponse, error)
+	Join(context.Context, *BootstrapRequest) (*BootstrapResponse, error)
 }
 
 // UnimplementedBootstrapServer can be embedded to have forward compatible implementations.
 type UnimplementedBootstrapServer struct {
 }
 
-func (*UnimplementedBootstrapServer) Join(ctx context.Context, req *JoinRequest) (*JoinResponse, error) {
+func (*UnimplementedBootstrapServer) Join(ctx context.Context, req *BootstrapRequest) (*BootstrapResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method Join not implemented")
 }
 
@@ -232,7 +232,7 @@ func RegisterBootstrapServer(s *grpc.Server, srv BootstrapServer) {
 }
 
 func _Bootstrap_Join_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
-	in := new(JoinRequest)
+	in := new(BootstrapRequest)
 	if err := dec(in); err != nil {
 		return nil, err
 	}
@@ -244,7 +244,7 @@ func _Bootstrap_Join_Handler(srv interface{}, ctx context.Context, dec func(inte
 		FullMethod: "/Bootstrap/Join",
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
-		return srv.(BootstrapServer).Join(ctx, req.(*JoinRequest))
+		return srv.(BootstrapServer).Join(ctx, req.(*BootstrapRequest))
 	}
 	return interceptor(ctx, in, info, handler)
 }
@@ -262,7 +262,7 @@ var _Bootstrap_serviceDesc = grpc.ServiceDesc{
 	Metadata: "bootstrap/network/grpc/service/service.proto",
 }
 
-func (m *JoinRequest) Marshal() (dAtA []byte, err error) {
+func (m *BootstrapRequest) Marshal() (dAtA []byte, err error) {
 	size := m.Size()
 	dAtA = make([]byte, size)
 	n, err := m.MarshalToSizedBuffer(dAtA[:size])
@@ -272,12 +272,12 @@ func (m *JoinRequest) Marshal() (dAtA []byte, err error) {
 	return dAtA[:n], nil
 }
 
-func (m *JoinRequest) MarshalTo(dAtA []byte) (int, error) {
+func (m *BootstrapRequest) MarshalTo(dAtA []byte) (int, error) {
 	size := m.Size()
 	return m.MarshalToSizedBuffer(dAtA[:size])
 }
 
-func (m *JoinRequest) MarshalToSizedBuffer(dAtA []byte) (int, error) {
+func (m *BootstrapRequest) MarshalToSizedBuffer(dAtA []byte) (int, error) {
 	i := len(dAtA)
 	_ = i
 	var l int
@@ -290,7 +290,7 @@ func (m *JoinRequest) MarshalToSizedBuffer(dAtA []byte) (int, error) {
 	return len(dAtA) - i, nil
 }
 
-func (m *JoinResponse) Marshal() (dAtA []byte, err error) {
+func (m *BootstrapResponse) Marshal() (dAtA []byte, err error) {
 	size := m.Size()
 	dAtA = make([]byte, size)
 	n, err := m.MarshalToSizedBuffer(dAtA[:size])
@@ -300,12 +300,12 @@ func (m *JoinResponse) Marshal() (dAtA []byte, err error) {
 	return dAtA[:n], nil
 }
 
-func (m *JoinResponse) MarshalTo(dAtA []byte) (int, error) {
+func (m *BootstrapResponse) MarshalTo(dAtA []byte) (int, error) {
 	size := m.Size()
 	return m.MarshalToSizedBuffer(dAtA[:size])
 }
 
-func (m *JoinResponse) MarshalToSizedBuffer(dAtA []byte) (int, error) {
+func (m *BootstrapResponse) MarshalToSizedBuffer(dAtA []byte) (int, error) {
 	i := len(dAtA)
 	_ = i
 	var l int
@@ -341,7 +341,7 @@ func encodeVarintService(dAtA []byte, offset int, v uint64) int {
 	dAtA[offset] = uint8(v)
 	return base
 }
-func (m *JoinRequest) Size() (n int) {
+func (m *BootstrapRequest) Size() (n int) {
 	if m == nil {
 		return 0
 	}
@@ -353,7 +353,7 @@ func (m *JoinRequest) Size() (n int) {
 	return n
 }
 
-func (m *JoinResponse) Size() (n int) {
+func (m *BootstrapResponse) Size() (n int) {
 	if m == nil {
 		return 0
 	}
@@ -375,7 +375,7 @@ func sovService(x uint64) (n int) {
 func sozService(x uint64) (n int) {
 	return sovService(uint64((x << 1) ^ uint64((int64(x) >> 63))))
 }
-func (m *JoinRequest) Unmarshal(dAtA []byte) error {
+func (m *BootstrapRequest) Unmarshal(dAtA []byte) error {
 	l := len(dAtA)
 	iNdEx := 0
 	for iNdEx < l {
@@ -398,10 +398,10 @@ func (m *JoinRequest) Unmarshal(dAtA []byte) error {
 		fieldNum := int32(wire >> 3)
 		wireType := int(wire & 0x7)
 		if wireType == 4 {
-			return fmt.Errorf("proto: JoinRequest: wiretype end group for non-group")
+			return fmt.Errorf("proto: BootstrapRequest: wiretype end group for non-group")
 		}
 		if fieldNum <= 0 {
-			return fmt.Errorf("proto: JoinRequest: illegal tag %d (wire type %d)", fieldNum, wire)
+			return fmt.Errorf("proto: BootstrapRequest: illegal tag %d (wire type %d)", fieldNum, wire)
 		}
 		switch fieldNum {
 		case 1:
@@ -447,7 +447,7 @@ func (m *JoinRequest) Unmarshal(dAtA []byte) error {
 	}
 	return nil
 }
-func (m *JoinResponse) Unmarshal(dAtA []byte) error {
+func (m *BootstrapResponse) Unmarshal(dAtA []byte) error {
 	l := len(dAtA)
 	iNdEx := 0
 	for iNdEx < l {
@@ -470,10 +470,10 @@ func (m *JoinResponse) Unmarshal(dAtA []byte) error {
 		fieldNum := int32(wire >> 3)
 		wireType := int(wire & 0x7)
 		if wireType == 4 {
-			return fmt.Errorf("proto: JoinResponse: wiretype end group for non-group")
+			return fmt.Errorf("proto: BootstrapResponse: wiretype end group for non-group")
 		}
 		if fieldNum <= 0 {
-			return fmt.Errorf("proto: JoinResponse: illegal tag %d (wire type %d)", fieldNum, wire)
+			return fmt.Errorf("proto: BootstrapResponse: illegal tag %d (wire type %d)", fieldNum, wire)
 		}
 		switch fieldNum {
 		case 1:
@@ -490,7 +490,7 @@ func (m *JoinResponse) Unmarshal(dAtA []byte) error {
 				}
 				b := dAtA[iNdEx]
 				iNdEx++
-				m.Status |= JoinResponse_Status(b&0x7F) << shift
+				m.Status |= BootstrapResponse_Status(b&0x7F) << shift
 				if b < 0x80 {
 					break
 				}

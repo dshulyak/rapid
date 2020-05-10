@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"net"
+	"time"
 
 	"github.com/dshulyak/rapid/consensus"
 	cgrpc "github.com/dshulyak/rapid/consensus/network/grpc"
@@ -48,12 +49,16 @@ func (r RapidSeed) Run(ctx context.Context, updates chan *types.Configuration) e
 			node = n
 			break
 		}
+	}
+	if node == nil {
 		return fmt.Errorf("%w: node %s:%d not in the seed list", ErrInvalidSeed, r.conf.IP, r.conf.Port)
 	}
 
 	configuration := &types.Configuration{
 		Nodes: r.conf.Seeds,
 	}
+
+	r.logger.With("node", node).Info("instance is launched as seed")
 
 	srv := grpc.NewServer()
 
@@ -66,7 +71,7 @@ func (r RapidSeed) Run(ctx context.Context, updates chan *types.Configuration) e
 			Timeout:          r.conf.ElectionTimeout,
 			HeartbeatTimeout: r.conf.HeartbeatTimeout,
 		},
-		r.conf.NetworkDelay,
+		time.Duration(r.conf.NetworkDelay),
 	)
 	values := make(chan []*ctypes.LearnedValue, 1)
 	cons.Subscribe(ctx, values)
@@ -78,13 +83,13 @@ func (r RapidSeed) Run(ctx context.Context, updates chan *types.Configuration) e
 			K:                 r.conf.Connectivity,
 			LW:                r.conf.LowWatermark,
 			HW:                r.conf.HighWatermark,
-			TimeoutPeriod:     r.conf.NetworkDelay,
+			TimeoutPeriod:     time.Duration(r.conf.NetworkDelay),
 			ReinforceTimeout:  r.conf.ReinforceTimeout,
 			RetransmitTimeout: r.conf.RetransmitTimeout,
 		},
 		configuration,
 		r.fd,
-		mgrpc.New(r.logger, node.ID, srv, r.conf.DialTimeout, r.conf.SendTimeout),
+		mgrpc.New(r.logger, node.ID, srv, time.Duration(r.conf.DialTimeout), time.Duration(r.conf.SendTimeout)),
 	)
 
 	group.Go(func() error {

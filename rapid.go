@@ -3,6 +3,7 @@ package rapid
 import (
 	"context"
 	"crypto/sha256"
+	"encoding/json"
 	"fmt"
 	"math/rand"
 	"net"
@@ -22,9 +23,28 @@ import (
 	"google.golang.org/grpc"
 )
 
+type StringDuration time.Duration
+
+func (d StringDuration) MarshalJSON() ([]byte, error) {
+	return json.Marshal(time.Duration(d).String())
+}
+
+func (d *StringDuration) UnmarshalJSON(b []byte) error {
+	v := ""
+	if err := json.Unmarshal(b, &v); err != nil {
+		return err
+	}
+	val, err := time.ParseDuration(v)
+	if err != nil {
+		return err
+	}
+	*d = StringDuration(val)
+	return nil
+}
+
 type Config struct {
 	// Expected network delay used for ticks
-	NetworkDelay time.Duration
+	NetworkDelay StringDuration
 
 	// Paxos
 
@@ -55,7 +75,7 @@ type Config struct {
 	IP   string
 	Port uint64
 
-	DialTimeout, SendTimeout time.Duration
+	DialTimeout, SendTimeout StringDuration
 }
 
 // TODO replace logger with interface and allow to initialize Rapid with factory for creating network backends.
@@ -110,7 +130,7 @@ func (r Rapid) Run(ctx context.Context, updates chan<- *types.Configuration) err
 			Timeout:          r.conf.ElectionTimeout,
 			HeartbeatTimeout: r.conf.HeartbeatTimeout,
 		},
-		r.conf.NetworkDelay,
+		time.Duration(r.conf.NetworkDelay),
 	)
 
 	mon := monitor.NewManager(
@@ -120,13 +140,13 @@ func (r Rapid) Run(ctx context.Context, updates chan<- *types.Configuration) err
 			K:                 r.conf.Connectivity,
 			LW:                r.conf.LowWatermark,
 			HW:                r.conf.HighWatermark,
-			TimeoutPeriod:     r.conf.NetworkDelay,
+			TimeoutPeriod:     time.Duration(r.conf.NetworkDelay),
 			ReinforceTimeout:  r.conf.ReinforceTimeout,
 			RetransmitTimeout: r.conf.RetransmitTimeout,
 		},
 		configuration,
 		r.fd,
-		mgrpc.New(r.logger, node.ID, srv, r.conf.DialTimeout, r.conf.SendTimeout),
+		mgrpc.New(r.logger, node.ID, srv, time.Duration(r.conf.DialTimeout), time.Duration(r.conf.SendTimeout)),
 	)
 
 	values := make(chan []*ctypes.LearnedValue, 1)
@@ -261,6 +281,6 @@ func (r Rapid) bootstrapClient() bootstrap.Client {
 	return bootstrap.NewClient(
 		r.logger,
 		r.conf.Seeds,
-		bgrpc.NewClient(r.conf.DialTimeout, r.conf.SendTimeout),
+		bgrpc.NewClient(time.Duration(r.conf.DialTimeout), time.Duration(r.conf.SendTimeout)),
 	)
 }

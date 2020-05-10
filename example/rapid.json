@@ -1,0 +1,18 @@
+{
+    "NetworkDelay": "200ms",
+    "ElectionTimeout": 10,
+    "HeartbeatTimeout": 4,
+    "ReinforceTimeout": 6,
+    "RetransmitTimeout": 6,
+    "Connectivity": 5,
+    "LowWatermark": 2,
+    "HighWatermark": 4,
+    "DialTimeout": "3s",
+    "SendTimeout": "2s",
+    "Seeds": [
+        {"IP": "0.0.0.0", "Port": 4001, "ID": 1},
+        {"IP": "0.0.0.0", "Port": 4002, "ID": 2},
+        {"IP": "0.0.0.0", "Port": 4003, "ID": 3},
+        {"IP": "0.0.0.0", "Port": 4004, "ID": 4}
+    ]
+}

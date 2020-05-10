@@ -31,14 +31,14 @@ func (c Client) Join(ctx context.Context, n *types.Node, id uint64) (*types.Conf
 	client := service.NewBootstrapClient(conn)
 	ctx, cancel := context.WithTimeout(ctx, c.sendTimeout)
 	defer cancel()
-	resp, err := client.Join(ctx, &service.JoinRequest{NodeID: id})
+	resp, err := client.Join(ctx, &service.BootstrapRequest{NodeID: id})
 	if err != nil {
 		return nil, err
 	}
 	switch resp.Status {
-	case service.JoinResponse_OK:
+	case service.BootstrapResponse_OK:
 		return resp.Configuration, nil
-	case service.JoinResponse_NODE_ID_CONFLICT:
+	case service.BootstrapResponse_NODE_ID_CONFLICT:
 		return nil, bootstrap.ErrNodeIDConflict
 	default:
 		return nil, fmt.Errorf("unknown response status %v", resp.Status)

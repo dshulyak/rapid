@@ -80,6 +80,6 @@ func (w handlerWrapper) Join(ctx context.Context, req *service.JoinRequest) (*se
 	return &service.JoinResponse{Status: status}, nil
 }
 
-func (w handlerWrapper) Broadcast(ctx context.Context, req *service.BroadcastRequest) (*service.Empty, error) {
+func (w handlerWrapper) Broadcast(ctx context.Context, req *service.BroadcastRequest) (*service.EmptyResp, error) {
 	return nil, w.handler.Broadcast(ctx, req.Alerts)
 }
