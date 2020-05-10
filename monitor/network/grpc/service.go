@@ -35,7 +35,7 @@ type Service struct {
 	dialTimeout, sendTimeout time.Duration
 }
 
-func (s Service) Register(handler monitor.NetworkHandler) {
+func (s Service) Register(handler *monitor.NetworkHandler) {
 	service.RegisterMonitorServer(s.srv, handlerWrapper{handler})
 }
 
@@ -64,7 +64,7 @@ func (n Service) Join(ctx context.Context, configID uint64, observer, subject *t
 }
 
 type handlerWrapper struct {
-	handler monitor.NetworkHandler
+	handler *monitor.NetworkHandler
 }
 
 func (w handlerWrapper) Join(ctx context.Context, req *service.JoinRequest) (*service.JoinResponse, error) {

@@ -28,15 +28,24 @@ func (b Service) Broadcast(ctx context.Context, source <-chan []*mtypes.Alert) e
 			wg.Wait()
 			return ctx.Err()
 		case alerts := <-source:
+			b.logger.With("alerts", alerts).Debug("broadcast")
 			for _, ch := range topo {
-				ch <- alerts
+				select {
+				case ch <- alerts:
+				case <-ctx.Done():
+					break
+				}
 			}
 		case kg := <-b.graph:
 			// close previous connection after an update
 			kg.IterateObservers(b.id, func(n *types.Node) bool {
+				n = n
 				if _, exist := topo[n.ID]; exist {
 					return true
 				}
+				b.logger.With(
+					"node", n,
+				).Debug("created broadcaster")
 				alertch := make(chan []*mtypes.Alert, 1)
 
 				topo[n.ID] = alertch
@@ -45,6 +54,9 @@ func (b Service) Broadcast(ctx context.Context, source <-chan []*mtypes.Alert) e
 				go func() {
 					defer wg.Done()
 					b.sendLoop(ctx, n, alertch)
+					b.logger.With(
+						"node", n,
+					).Debug("exit broadcaster")
 				}()
 				return true
 			})
@@ -66,6 +78,10 @@ func (b Service) sendLoop(ctx context.Context, n *types.Node, source <-chan []*m
 			if conn == nil {
 				conn, err = b.dial(ctx, n)
 				if err != nil {
+					b.logger.With(
+						"node", n,
+						"error", err,
+					).Debug("dial failed")
 					continue
 				}
 				client = service.NewMonitorClient(conn)
@@ -73,7 +89,11 @@ func (b Service) sendLoop(ctx context.Context, n *types.Node, source <-chan []*m
 			ctx, cancel := context.WithTimeout(ctx, b.sendTimeout)
 			_, err = client.Broadcast(ctx, &service.BroadcastRequest{Alerts: alerts})
 			if err != nil {
-				b.logger.Error("failed to broadcast alerts cnt=", len(alerts), " error=", err)
+				b.logger.With(
+					"node", n,
+					"alerts", alerts,
+					"error", err,
+				).Debug("failed to broadcast alerts")
 			}
 			cancel()
 		}
@@ -83,5 +103,5 @@ func (b Service) sendLoop(ctx context.Context, n *types.Node, source <-chan []*m
 func (b Service) dial(ctx context.Context, n *types.Node) (*grpc.ClientConn, error) {
 	ctx, cancel := context.WithTimeout(ctx, b.dialTimeout)
 	defer cancel()
-	return grpc.DialContext(ctx, fmt.Sprintf("%s:%d", n.IP, n.Port))
+	return grpc.DialContext(ctx, fmt.Sprintf("%s:%d", n.IP, n.Port), grpc.WithInsecure(), grpc.WithBlock())
 }

@@ -11,7 +11,7 @@ import (
 
 func NewAlertsReactor(logger *zap.SugaredLogger, period time.Duration, alerts *Alerts) AlertsReactor {
 	return AlertsReactor{
-		logger:   logger,
+		logger:   logger.Named("alerts reactor"),
 		period:   period,
 		alerts:   alerts,
 		incoming: make(chan *mtypes.Alert, 1),
@@ -40,6 +40,7 @@ func (r AlertsReactor) Update(kg *KGraph) {
 }
 
 func (r AlertsReactor) Observe(ctx context.Context, alert *mtypes.Alert) error {
+	r.logger.With("alert", alert).Debug("observed")
 	select {
 	case r.incoming <- alert:
 	case <-ctx.Done():
@@ -84,7 +85,7 @@ func (r AlertsReactor) Run(ctx context.Context) error {
 			outchan = nil
 			outgoing = nil
 		case kg := <-r.graph:
-			r.Update(kg)
+			r.alerts.Update(kg)
 		}
 		if len(changes) > 0 {
 			chchan = r.changes

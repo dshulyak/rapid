@@ -56,11 +56,13 @@ type Manager struct {
 func (m *Manager) Run(ctx context.Context) error {
 	group, ctx := errgroup.WithContext(ctx)
 	group.Go(func() error {
+		defer m.logger.Info("exit consensus reactor")
 		return m.consensus.Run(ctx)
 	})
+	swarmvals := make(chan []*types.LearnedValue, 1)
+	m.bus.subscribe(ctx, swarmvals)
 	group.Go(func() error {
-		swarmvals := make(chan []*types.LearnedValue, 1)
-		m.bus.subscribe(ctx, swarmvals)
+		defer m.logger.Info("exit network updater")
 		for {
 			select {
 			case <-ctx.Done():
@@ -73,21 +75,23 @@ func (m *Manager) Run(ctx context.Context) error {
 		}
 	})
 	group.Go(func() error {
+		defer m.logger.Info("exit messages sender")
 		for {
 			select {
 			case <-ctx.Done():
 				return ctx.Err()
 			case msgs := <-m.consensus.Messages():
-				// TODO each message should be sent to separate channel to prevent blocking this node.
+				// TODO each message should be sent to separate channel to prevent blocking here.
 				for i := range msgs {
 					if err := m.swarm.Send(ctx, msgs[i]); err != nil && !errors.Is(err, context.Canceled) {
-						m.logger.With("error", err).Warn("failed to send")
+						m.logger.With("error", err).Debug("failed to send")
 					}
 				}
 			}
 		}
 	})
 	group.Go(func() error {
+		defer m.logger.Info("exit values observer")
 		for {
 			select {
 			case <-ctx.Done():

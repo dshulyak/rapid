@@ -48,7 +48,6 @@ func (tc *testCluster) setup() {
 	tc.group = group
 	for _, n := range tc.initial.Nodes {
 		conf := tc.template
-		conf.ID = n.ID
 		conf.Node = n
 		man := monitor.NewManager(
 			tc.logger,
@@ -100,7 +99,6 @@ func TestManagerJoin(t *testing.T) {
 	joiner := &types.Node{ID: 101}
 	conf := tc.template
 	conf.Node = joiner
-	conf.ID = joiner.ID
 
 	man := monitor.NewManager(
 		tc.logger,

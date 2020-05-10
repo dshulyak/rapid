@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"sync"
+	"time"
 
 	"github.com/dshulyak/rapid/consensus"
 	"github.com/dshulyak/rapid/consensus/network/grpc/service"
@@ -14,16 +15,18 @@ import (
 	"google.golang.org/grpc"
 )
 
-func New(logger *zap.SugaredLogger, srv *grpc.Server, config *types.Configuration) *Service {
+func New(logger *zap.SugaredLogger, srv *grpc.Server, config *types.Configuration, dialTimeout, sendTimeout time.Duration) *Service {
 	nodes := map[uint64]*types.Node{}
 	for _, n := range config.Nodes {
 		nodes[n.ID] = n
 	}
 	return &Service{
-		srv:    srv,
-		logger: logger.Named("grpc"),
-		config: nodes,
-		pool:   map[uint64]service.ConsensusClient{},
+		srv:         srv,
+		logger:      logger.Named("consensus grpc"),
+		config:      nodes,
+		pool:        map[uint64]service.ConsensusClient{},
+		dialTimeout: dialTimeout,
+		sendTimeout: sendTimeout,
 	}
 }
 
@@ -39,6 +42,8 @@ type Service struct {
 
 	mu   sync.RWMutex
 	pool map[uint64]service.ConsensusClient
+
+	dialTimeout, sendTimeout time.Duration
 }
 
 func (s *Service) Update(changes *types.Changes) error {
@@ -64,32 +69,41 @@ func (s *Service) Update(changes *types.Changes) error {
 
 func (s *Service) Send(ctx context.Context, msg *ctypes.Message) error {
 	s.mu.RLock()
-	if client, exist := s.pool[msg.To]; exist {
+	if _, exist := s.pool[msg.To]; exist {
+		s.logger.With("to", msg.To).Debug("connection exist")
 		defer s.mu.RUnlock()
 		// TODO send options?
-		_, err := client.Send(ctx, msg)
-		return err
+		return s.send(ctx, msg)
 	}
 	s.mu.RUnlock()
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	// concurrent goroutines can both wait on s.mu.Lock
-	if client, exist := s.pool[msg.To]; exist {
-		_, err := client.Send(ctx, msg)
-		return err
+	if _, exist := s.pool[msg.To]; exist {
+		return s.send(ctx, msg)
 	}
 	conf, exist := s.config[msg.To]
 	if !exist {
 		return fmt.Errorf("no address for peer %d", msg.To)
 	}
 	addr := fmt.Sprintf("%s:%d", conf.IP, conf.Port)
-	conn, err := grpc.DialContext(ctx, addr)
+	s.logger.With("addr", addr).Debug("dialing")
+
+	dctx, cancel := context.WithTimeout(ctx, s.dialTimeout)
+	conn, err := grpc.DialContext(dctx, addr, grpc.WithInsecure(), grpc.WithBlock())
+	cancel()
 	if err != nil {
 		return fmt.Errorf("failed to dial peer %d: %w", msg.To, err)
 	}
-	client := service.NewConsensusClient(conn)
-	s.pool[msg.To] = client
-	_, err = client.Send(ctx, msg)
+	s.pool[msg.To] = service.NewConsensusClient(conn)
+	return s.send(ctx, msg)
+}
+
+func (s *Service) send(ctx context.Context, msg *ctypes.Message) error {
+	client := s.pool[msg.To]
+	ctx, cancel := context.WithTimeout(ctx, s.sendTimeout)
+	defer cancel()
+	_, err := client.Send(ctx, msg)
 	return err
 }
 

@@ -49,5 +49,5 @@ func (c Client) Join(ctx context.Context, n *types.Node, id uint64) (*types.Conf
 func (c Client) dial(ctx context.Context, n *types.Node) (*grpc.ClientConn, error) {
 	ctx, cancel := context.WithTimeout(ctx, c.dialTimeout)
 	defer cancel()
-	return grpc.DialContext(ctx, fmt.Sprintf("%s:%d", n.IP, n.Port))
+	return grpc.DialContext(ctx, fmt.Sprintf("%s:%d", n.IP, n.Port), grpc.WithInsecure(), grpc.WithBlock())
 }

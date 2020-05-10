@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"io/ioutil"
+	"math/rand"
 	"os"
 	"os/signal"
 	"syscall"
@@ -33,6 +34,8 @@ func must(err error) {
 
 func main() {
 	pflag.Parse()
+
+	rand.Seed(time.Now().Unix())
 
 	logger, err := zap.NewDevelopment()
 	must(err)

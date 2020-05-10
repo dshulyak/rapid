@@ -123,14 +123,14 @@ func (r Rapid) Run(ctx context.Context, updates chan<- *types.Configuration) err
 
 	cons := consensus.NewManager(
 		r.logger,
-		cgrpc.New(r.logger, srv, configuration),
+		cgrpc.New(r.logger, srv, configuration, time.Duration(r.conf.DialTimeout), time.Duration(r.conf.SendTimeout)),
 		consensus.Config{
 			Node:             node,
 			Configuration:    configuration,
 			Timeout:          r.conf.ElectionTimeout,
 			HeartbeatTimeout: r.conf.HeartbeatTimeout,
 		},
-		time.Duration(r.conf.NetworkDelay),
+		time.Duration(r.conf.NetworkDelay)+time.Duration(rng.Int63n(int64(r.conf.NetworkDelay)/2)),
 	)
 
 	mon := monitor.NewManager(
@@ -157,6 +157,7 @@ func (r Rapid) Run(ctx context.Context, updates chan<- *types.Configuration) err
 		if err != nil {
 			return err
 		}
+		r.logger.With("address", sock.Addr()).Info("started grpc")
 		return srv.Serve(sock)
 	})
 
@@ -172,6 +173,7 @@ func (r Rapid) Run(ctx context.Context, updates chan<- *types.Configuration) err
 
 	if err := mon.Join(ctx); err != nil {
 		r.logger.With("error", err).Error("step 2 join failed")
+		return err
 	}
 	r.logger.Debug("step 2 join suceeded")
 

@@ -5,9 +5,12 @@ import (
 	"crypto/sha256"
 	"errors"
 	"fmt"
+	"math/rand"
 	"net"
 	"time"
 
+	"github.com/dshulyak/rapid/bootstrap"
+	bgrpc "github.com/dshulyak/rapid/bootstrap/network/grpc"
 	"github.com/dshulyak/rapid/consensus"
 	cgrpc "github.com/dshulyak/rapid/consensus/network/grpc"
 	ctypes "github.com/dshulyak/rapid/consensus/types"
@@ -64,14 +67,14 @@ func (r RapidSeed) Run(ctx context.Context, updates chan *types.Configuration) e
 
 	cons := consensus.NewManager(
 		r.logger,
-		cgrpc.New(r.logger, srv, configuration),
+		cgrpc.New(r.logger, srv, configuration, time.Duration(r.conf.DialTimeout), time.Duration(r.conf.SendTimeout)),
 		consensus.Config{
 			Node:             node,
 			Configuration:    configuration,
 			Timeout:          r.conf.ElectionTimeout,
 			HeartbeatTimeout: r.conf.HeartbeatTimeout,
 		},
-		time.Duration(r.conf.NetworkDelay),
+		time.Duration(r.conf.NetworkDelay)+time.Duration(rand.Int63n(int64(r.conf.NetworkDelay)/2)),
 	)
 	values := make(chan []*ctypes.LearnedValue, 1)
 	cons.Subscribe(ctx, values)
@@ -92,11 +95,14 @@ func (r RapidSeed) Run(ctx context.Context, updates chan *types.Configuration) e
 		mgrpc.New(r.logger, node.ID, srv, time.Duration(r.conf.DialTimeout), time.Duration(r.conf.SendTimeout)),
 	)
 
+	boot := bootstrap.NewService(r.logger, configuration, bgrpc.NewService(srv))
+
 	group.Go(func() error {
 		sock, err := net.Listen("tcp", fmt.Sprintf("%s:%d", node.IP, node.Port))
 		if err != nil {
 			return err
 		}
+		r.logger.With("address", sock.Addr()).Info("started grpc")
 		return srv.Serve(sock)
 	})
 
@@ -114,6 +120,8 @@ func (r RapidSeed) Run(ctx context.Context, updates chan *types.Configuration) e
 		return mon.Run(ctx)
 	})
 
+	mon.Update(configuration)
+
 	group.Go(func() error {
 		mapping := map[uint64]*types.Node{}
 		for _, node := range configuration.Nodes {
@@ -128,6 +136,7 @@ func (r RapidSeed) Run(ctx context.Context, updates chan *types.Configuration) e
 						ID:    v.Sequence,
 					}
 					mon.Update(update)
+					boot.Update(update)
 					select {
 					case updates <- update:
 					case <-ctx.Done():
@@ -135,6 +144,7 @@ func (r RapidSeed) Run(ctx context.Context, updates chan *types.Configuration) e
 					}
 				}
 			case changes := <-mon.Changes():
+				r.logger.With("changes", changes).Info("new changes")
 				for _, change := range changes {
 					switch change.Type {
 					case types.Change_JOIN:

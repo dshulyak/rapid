@@ -108,3 +108,8 @@ func (info replicasInfo) iterate(fn func(*replicaState) bool) {
 		}
 	}
 }
+
+func (info replicasInfo) exist(id uint64) bool {
+	_, exist := info.replicas[id]
+	return exist
+}

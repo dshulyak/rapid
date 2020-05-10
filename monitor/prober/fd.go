@@ -56,7 +56,7 @@ func (fd FailureDetector) Monitor(ctx context.Context, node *types.Node) error {
 func (fd FailureDetector) Probe(ctx context.Context, node *types.Node) error {
 	ctx, cancel := context.WithTimeout(ctx, fd.timeout)
 	defer cancel()
-	conn, err := grpc.DialContext(ctx, fmt.Sprintf("%s:%d", node.IP, node.Port))
+	conn, err := grpc.DialContext(ctx, fmt.Sprintf("%s:%d", node.IP, node.Port), grpc.WithInsecure(), grpc.WithBlock())
 	if err != nil {
 		return err
 	}

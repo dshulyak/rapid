@@ -27,6 +27,7 @@ type NetworkClient interface {
 func NewService(logger *zap.SugaredLogger, configuration *types.Configuration, netsrv NetworkServer) *Service {
 	svc := &Service{
 		logger: logger,
+		ids:    map[uint64]struct{}{},
 	}
 	svc.Update(configuration)
 	netsrv.Register(svc)
@@ -73,7 +74,7 @@ func (s *Service) Join(ctx context.Context, id uint64) (*types.Configuration, er
 
 func NewClient(logger *zap.SugaredLogger, seeds []*types.Node, netclient NetworkClient) Client {
 	return Client{
-		logger:    logger,
+		logger:    logger.Named("bootstrap client"),
 		seeds:     seeds,
 		netclient: netclient,
 	}
@@ -92,9 +93,14 @@ func (c Client) Join(ctx context.Context, id uint64) (*types.Configuration, erro
 	// TODO it will be enough to get responses from majority to guarantee that we got recent configuration
 	for _, n := range c.seeds {
 		n := n
+		c.logger.With("node", n).Debug("send join")
 		group.Go(func() error {
 			conf, err := c.netclient.Join(ctx, n, id)
 			if err != nil {
+				c.logger.With(
+					"node", n,
+					"error", err,
+				).Error("join failed")
 				return err
 			}
 			configurations <- conf

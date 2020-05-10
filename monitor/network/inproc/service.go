@@ -35,7 +35,7 @@ type Service struct {
 	graph chan *monitor.KGraph
 }
 
-func (s *Service) Update(kg *monitor.KGraph) {
+func (s *Service) Update(ctx context.Context, kg *monitor.KGraph) {
 	s.graph <- kg
 }
 
@@ -64,7 +64,7 @@ func (s *Service) Broadcast(ctx context.Context, alertsch <-chan []*mtypes.Alert
 	}
 }
 
-func (s *Service) Register(handler monitor.NetworkHandler) {
+func (s *Service) Register(handler *monitor.NetworkHandler) {
 	s.network.Register(s.id, broadcastCode, func(ctx context.Context, msg interface{}) *inproc.Response {
 		alerts := msg.([]*mtypes.Alert)
 		_ = handler.Broadcast(ctx, alerts)

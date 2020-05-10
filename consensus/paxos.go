@@ -116,7 +116,7 @@ func (p *Paxos) Tick() {
 			}
 			state.ticks++
 			if state.ticks >= p.conf.HeartbeatTimeout {
-				p.logger.Debug("sent hearbeat.", " to=", state.id)
+				p.logger.With("to", state.id).Debug("hearbeat")
 				msg := *p.hbmsg
 				p.sendOne(
 					&msg,
@@ -220,6 +220,9 @@ func (p *Paxos) Step(msg *types.Message) {
 	p.logger.Debug("step")
 	if msg.To != p.replicaID {
 		p.logger.Error("delivered to wrong node.")
+		return
+	}
+	if !p.replicas.exist(msg.From) {
 		return
 	}
 
@@ -432,6 +435,9 @@ func (p *Paxos) stepLearned(msg *types.Message) {
 }
 
 func (p *Paxos) updateReplicas() {
+	if !p.elected {
+		return
+	}
 	commited := p.log.commited()
 	p.replicas.iterate(func(state *replicaState) bool {
 		if state.id == p.replicaID {

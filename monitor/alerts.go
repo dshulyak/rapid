@@ -20,7 +20,7 @@ type Config struct {
 func NewAlerts(logger *zap.SugaredLogger, kg *KGraph, conf Config) *Alerts {
 	alerts := &Alerts{
 		conf:       conf,
-		logger:     logger,
+		logger:     logger.Named("alerts"),
 		id:         conf.Node.ID,
 		reinforce:  conf.ReinforceTimeout,
 		observed:   map[uint64]*observedAlert{},
@@ -80,7 +80,11 @@ func (a *Alerts) Update(kg *KGraph) {
 	if a.hw > a.kg.K {
 		a.hw = a.kg.K
 	}
-
+	a.logger.With(
+		"K", a.kg.K,
+		"LW", a.lw,
+		"HW", a.hw,
+	).Info("updated alerts reactor")
 	for id := range a.observed {
 		delete(a.observed, id)
 	}
@@ -93,6 +97,12 @@ func (a *Alerts) Update(kg *KGraph) {
 func (a *Alerts) Tick() {
 	a.rticks++
 	if a.rticks == a.retransmit {
+		// TODO retransmit each alert only N times
+		a.logger.With(
+			"alerts", len(a.alerts),
+			"ticks", a.rticks,
+			"retransmit", a.retransmit,
+		).Debug("retransmit")
 		a.pending = append(a.pending, a.alerts...)
 	}
 	for _, observed := range a.observed {
@@ -111,24 +121,22 @@ func (a *Alerts) Tick() {
 			return true
 		})
 		if observed.ticks == a.reinforce {
-			a.Observe(&mtypes.Alert{
+			alert := &mtypes.Alert{
 				Observer: a.id,
 				Subject:  observed.id,
 				Change:   observed.change,
-			})
+			}
+			a.logger.With("alert", alert).Debug("reinforce")
+			a.Observe(alert)
 		}
 	}
 }
 
 func (a *Alerts) Observe(alert *mtypes.Alert) {
+	a.logger.With("alert", alert).Debug("observed new")
 	// FIXME can be more efficient, no need to loop through same stuff on every iteration
 
 	// record alert from our node in both sets, for sending and retransmission
-	if alert.Observer == a.id {
-		a.alerts = append(a.alerts, alert)
-	}
-	a.pending = append(a.pending, alert)
-
 	observed := a.observed[alert.Subject]
 	if observed == nil {
 		observed = &observedAlert{change: alert.Change, id: alert.Subject, received: map[uint64]struct{}{}}
@@ -138,6 +146,16 @@ func (a *Alerts) Observe(alert *mtypes.Alert) {
 	if observed.detected {
 		return
 	}
+
+	_, exist := observed.received[alert.Observer]
+	if exist {
+		return
+	}
+
+	if alert.Observer == a.id {
+		a.alerts = append(a.alerts, alert)
+	}
+	a.pending = append(a.pending, alert)
 
 	observed.received[alert.Observer] = struct{}{}
 	count := 0

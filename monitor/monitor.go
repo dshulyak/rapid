@@ -14,16 +14,14 @@ type FailureDetector interface {
 	Monitor(context.Context, *types.Node) error
 }
 
-func NewMonitor(logger *zap.SugaredLogger, id uint64, fd FailureDetector, am AlertsReactor, kg *KGraph) *Monitor {
-	mon := &Monitor{
-		logger: logger,
+func NewMonitor(logger *zap.SugaredLogger, id uint64, fd FailureDetector, am AlertsReactor) *Monitor {
+	return &Monitor{
+		logger: logger.Named("monitor"),
 		id:     id,
 		fd:     fd,
 		am:     am,
 		graph:  make(chan *KGraph, 1),
 	}
-	mon.Update(kg)
-	return mon
 }
 
 type Monitor struct {
@@ -47,7 +45,7 @@ func (m *Monitor) Run(ctx context.Context) error {
 	var (
 		group sync.WaitGroup
 		// fds is a map with cancellation functions
-		//fds   = map[uint64]func(){}
+		fds = map[uint64]func(){}
 	)
 	defer group.Wait()
 	for {
@@ -56,11 +54,18 @@ func (m *Monitor) Run(ctx context.Context) error {
 			return ctx.Err()
 		case kg := <-m.graph:
 			kg.IterateSubjects(m.id, func(node *types.Node) bool {
+				ctx, cancel := context.WithCancel(ctx)
+				_, exist := fds[node.ID]
+				if exist {
+					return true
+				}
+				fds[node.ID] = cancel
 				group.Add(1)
 				go func(node *types.Node) {
 					defer group.Done()
 					err := m.fd.Monitor(ctx, node)
 					if err != nil && !errors.Is(err, context.Canceled) {
+						m.logger.With("node", node).Debug("detected failure")
 						_ = m.am.Observe(ctx, &mtypes.Alert{
 							Observer: m.id,
 							Subject:  node.ID,
