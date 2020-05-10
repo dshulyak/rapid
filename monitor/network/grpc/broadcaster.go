@@ -4,31 +4,20 @@ import (
 	"context"
 	"fmt"
 	"sync"
-	"time"
 
 	"github.com/dshulyak/rapid/monitor"
 	"github.com/dshulyak/rapid/monitor/network/grpc/service"
 	mtypes "github.com/dshulyak/rapid/monitor/types"
 	"github.com/dshulyak/rapid/types"
-	"go.uber.org/zap"
 
 	"google.golang.org/grpc"
 )
 
-type Broadcaster struct {
-	id uint64
-
-	logger *zap.SugaredLogger
-	graph  chan *monitor.KGraph
-
-	dialTimeout, sendTimeout time.Duration
-}
-
-func (b Broadcaster) Update(kg *monitor.KGraph) {
+func (b Service) Update(kg *monitor.KGraph) {
 	b.graph <- kg
 }
 
-func (b Broadcaster) Broadcast(ctx context.Context, source <-chan []*mtypes.Alert) error {
+func (b Service) Broadcast(ctx context.Context, source <-chan []*mtypes.Alert) error {
 	var (
 		wg   sync.WaitGroup
 		topo = map[uint64]chan<- []*mtypes.Alert{}
@@ -63,7 +52,7 @@ func (b Broadcaster) Broadcast(ctx context.Context, source <-chan []*mtypes.Aler
 	}
 }
 
-func (b Broadcaster) sendLoop(ctx context.Context, n *types.Node, source <-chan []*mtypes.Alert) {
+func (b Service) sendLoop(ctx context.Context, n *types.Node, source <-chan []*mtypes.Alert) {
 	var (
 		conn   *grpc.ClientConn
 		client service.MonitorClient
@@ -91,7 +80,7 @@ func (b Broadcaster) sendLoop(ctx context.Context, n *types.Node, source <-chan 
 	}
 }
 
-func (b Broadcaster) dial(ctx context.Context, n *types.Node) (*grpc.ClientConn, error) {
+func (b Service) dial(ctx context.Context, n *types.Node) (*grpc.ClientConn, error) {
 	ctx, cancel := context.WithTimeout(ctx, b.dialTimeout)
 	defer cancel()
 	return grpc.DialContext(ctx, fmt.Sprintf("%s:%d", n.IP, n.Port))

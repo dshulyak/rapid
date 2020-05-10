@@ -4,29 +4,49 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"time"
 
 	"github.com/dshulyak/rapid/monitor"
 	"github.com/dshulyak/rapid/monitor/network/grpc/service"
 	"github.com/dshulyak/rapid/types"
+	"go.uber.org/zap"
 	"google.golang.org/grpc"
 )
 
-type Service struct {
-	Broadcaster
-	srv *grpc.Server
+func New(logger *zap.SugaredLogger, id uint64, srv *grpc.Server, dialTimeout, sendTimeout time.Duration) Service {
+	return Service{
+		logger:      logger,
+		id:          id,
+		srv:         srv,
+		dialTimeout: dialTimeout,
+		sendTimeout: sendTimeout,
+		graph:       make(chan *monitor.KGraph, 1),
+	}
 }
 
-func (s *Service) Register(handler monitor.NetworkHandler) {
+type Service struct {
+	id uint64
+
+	logger *zap.SugaredLogger
+	srv    *grpc.Server
+
+	graph chan *monitor.KGraph
+
+	dialTimeout, sendTimeout time.Duration
+}
+
+func (s Service) Register(handler monitor.NetworkHandler) {
 	service.RegisterMonitorServer(s.srv, handlerWrapper{handler})
 }
 
 func (n Service) Join(ctx context.Context, configID uint64, observer, subject *types.Node) error {
-	conn, err := grpc.DialContext(ctx, fmt.Sprintf("%s:%d", observer.IP, observer.Port))
+	conn, err := n.dial(ctx, observer)
 	if err != nil {
 		return err
 	}
-	client := service.NewMonitorClient(conn)
 	defer conn.Close()
+
+	client := service.NewMonitorClient(conn)
 	rsp, err := client.Join(ctx, &service.JoinRequest{
 		Node:            subject,
 		ConfigurationID: configID,
