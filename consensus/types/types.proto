@@ -17,7 +17,7 @@ message Message {
 
   uint64 from = 6;
   uint64 to = 7;
-  bytes instanceID = 8;
+  uint64 instanceID = 8;
 }
 
 message Prepare {
@@ -28,6 +28,7 @@ message Prepare {
 message Value {
   bytes id = 1;
   types.Changes changes = 2;
+  repeated types.Node nodes = 3;
 }
 
 message Promise {

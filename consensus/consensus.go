@@ -84,7 +84,7 @@ func (c *Consensus) Run(ctx context.Context) (err error) {
 	defer func() {
 		if err := recover(); err != nil {
 			err = fmt.Errorf("irrecoverable error: %v", err)
-			c.logger.Error("exiting with error=", err)
+			c.logger.With("error", err).Error("exiting")
 		}
 	}()
 	var (
@@ -96,7 +96,7 @@ func (c *Consensus) Run(ctx context.Context) (err error) {
 	)
 	defer ticker.Stop()
 
-	c.logger.Info("starting consensus with ticker period=", c.tick)
+	c.logger.With("tick", c.tick).Info("starting consensus with ticker period")
 	for {
 		// TODO if either outmsgs or values grow out of bounds (define in constructor)
 		// consensus should fail with irrecoverable error

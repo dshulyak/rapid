@@ -29,7 +29,7 @@ func NewManager(logger *zap.SugaredLogger, cons *Consensus, swarm Swarm) *Manage
 	swarm.Register(func(_ context.Context, msg *types.Message) error {
 		// if context is nil and queue is full message will be dropped
 		if err := cons.Receive(nil, []*types.Message{msg}); err != nil {
-			cons.logger.Warn("consensus doesn't accept messages. error=", err)
+			cons.logger.With("error", err).Warn("consensus doesn't accept messages.")
 		}
 		return nil
 	})
@@ -79,7 +79,7 @@ func (m *Manager) Run(ctx context.Context) error {
 				// TODO each message should be sent to separate channel to prevent blocking this node.
 				for i := range msgs {
 					if err := m.swarm.Send(ctx, msgs[i]); err != nil && !errors.Is(err, context.Canceled) {
-						m.logger.Warn("failed to send=", err)
+						m.logger.With("error", err).Warn("failed to send")
 					}
 				}
 			}

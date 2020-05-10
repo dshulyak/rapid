@@ -31,10 +31,7 @@ func NewCluster(n int, tick time.Duration, jitter int64) *Cluster {
 		conf := consensus.Config{
 			Timeout:          8,
 			HeartbeatTimeout: 2,
-			ReplicaID:        uint64(i),
-			FastQuorum:       3 * n / 4,
-			ClassicQuorum:    n/2 + 1,
-			InstanceID:       instanceID,
+			Node:             conf.Nodes[i-1],
 			Configuration:    conf,
 		}
 		pax := consensus.NewPaxos(logger, conf)
@@ -51,6 +48,7 @@ func NewCluster(n int, tick time.Duration, jitter int64) *Cluster {
 		ctx:      ctx,
 		cancel:   cancel,
 		logger:   logger,
+		nodes:    conf.Nodes,
 		size:     n,
 		network:  network,
 		managers: managers,
@@ -63,6 +61,8 @@ type Cluster struct {
 	cancel func()
 
 	logger *zap.SugaredLogger
+
+	nodes []*atypes.Node
 
 	size    int
 	network *network.Network
@@ -86,6 +86,10 @@ func (c *Cluster) Stop() error {
 
 func (c *Cluster) Manager(id uint64) *consensus.Manager {
 	return c.managers[id]
+}
+
+func (c *Cluster) Nodes() []*atypes.Node {
+	return c.nodes
 }
 
 func (c *Cluster) Propose(ctx context.Context, value *types.Value) error {

@@ -22,7 +22,7 @@ func devLogger() *zap.SugaredLogger {
 }
 
 func testLogger() *zap.SugaredLogger {
-	if _, exist := os.LookupEnv("PAXOS_DEBUG"); exist {
+	if _, exist := os.LookupEnv("DEBUG_PAXOS"); exist {
 		return devLogger()
 	}
 	return nopLogger()
@@ -32,10 +32,9 @@ func defaultConfig() consensus.Config {
 	return consensus.Config{
 		Timeout:          1,
 		HeartbeatTimeout: 1,
-		ReplicaID:        1,
-		ClassicQuorum:    3,
-		FastQuorum:       3,
-		InstanceID:       []byte("test"),
+		Node: &atypes.Node{
+			ID: 1,
+		},
 		Configuration: &atypes.Configuration{
 			Nodes: []*atypes.Node{
 				{ID: 1}, {ID: 2}, {ID: 3}, {ID: 4},
@@ -66,10 +65,7 @@ func TestPaxosPromiseNilForValidPrepare(t *testing.T) {
 	conf := defaultConfig()
 	pax := testPaxos(conf)
 
-	msg := types.WithInstance(
-		conf.InstanceID,
-		types.WithRouting(2, conf.ReplicaID,
-			types.NewPrepareMessage(1, 1)))
+	msg := types.WithRouting(2, conf.Node.ID, types.NewPrepareMessage(1, 1))
 
 	pax.Step(msg)
 	messages := pax.Messages()
@@ -99,9 +95,7 @@ func TestPaxosAcceptAnyNilPromisesAggregated(t *testing.T) {
 	}
 
 	for _, n := range conf.Configuration.Nodes {
-		msg := types.WithInstance(
-			conf.InstanceID,
-			types.WithRouting(n.ID, 1, types.NewPromiseMessage(1, 1, 0, 0, nil)))
+		msg := types.WithRouting(n.ID, 1, types.NewPromiseMessage(1, 1, 0, 0, nil))
 		pax.Step(msg)
 	}
 	messages = pax.Messages()
@@ -122,10 +116,8 @@ func TestPaxosAcceptedMajority(t *testing.T) {
 	require.Len(t, messages, 3)
 
 	for _, n := range conf.Configuration.Nodes {
-		if n.ID != conf.ReplicaID {
-			pax.Step(types.WithInstance(
-				conf.InstanceID,
-				types.WithRouting(n.ID, conf.ReplicaID, types.NewPromiseMessage(1, 1, 0, 0, nil))))
+		if n.ID != conf.Node.ID {
+			pax.Step(types.WithRouting(n.ID, conf.Node.ID, types.NewPromiseMessage(1, 1, 0, 0, nil)))
 		}
 	}
 	messages = pax.Messages()
@@ -133,10 +125,8 @@ func TestPaxosAcceptedMajority(t *testing.T) {
 
 	id := []byte("replica")
 	for _, n := range conf.Configuration.Nodes {
-		if n.ID != conf.ReplicaID {
-			pax.Step(types.WithInstance(
-				conf.InstanceID,
-				types.WithRouting(n.ID, conf.ReplicaID, types.NewAcceptedMessage(1, 1, &types.Value{Id: id}))))
+		if n.ID != conf.Node.ID {
+			pax.Step(types.WithRouting(n.ID, conf.Node.ID, types.NewAcceptedMessage(1, 1, &types.Value{Id: id})))
 		}
 	}
 	messages = pax.Messages()
@@ -160,15 +150,12 @@ func TestPaxosAcceptAsHeartbeat(t *testing.T) {
 	pax.Tick()
 
 	for _, n := range conf.Configuration.Nodes {
-		if n.ID != conf.ReplicaID {
-			pax.Step(
-				types.WithInstance(
-					conf.InstanceID,
-					types.WithRouting(
-						n.ID,
-						conf.ReplicaID,
-						types.NewPromiseMessage(1, 1, 0, 0, nil),
-					)))
+		if n.ID != conf.Node.ID {
+			pax.Step(types.WithRouting(
+				n.ID,
+				conf.Node.ID,
+				types.NewPromiseMessage(1, 1, 0, 0, nil),
+			))
 		}
 	}
 	pax.Tick()

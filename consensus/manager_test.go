@@ -50,11 +50,11 @@ func TestManagerNoConflictsProgress(t *testing.T) {
 	defer cancel()
 	cluster.Subscribe(ctx, values)
 
-	proposed := &types.Value{Id: []byte("first")}
+	proposed := &types.Value{Id: []byte("first"), Nodes: cluster.Nodes()}
 	require.NoError(t, cluster.Propose(ctx, proposed))
 	consistent(t, values, []*types.Value{proposed}, 4)
 
-	proposed = &types.Value{Id: []byte("second")}
+	proposed = &types.Value{Id: []byte("second"), Nodes: cluster.Nodes()}
 	require.NoError(t, cluster.Propose(ctx, proposed))
 	consistent(t, values, []*types.Value{proposed}, 4)
 }
@@ -69,8 +69,8 @@ func TestManagerConflictingProgress(t *testing.T) {
 	defer cancel()
 	cluster.Subscribe(ctx, values)
 
-	first := &types.Value{Id: []byte("first")}
-	second := &types.Value{Id: []byte("second")}
+	first := &types.Value{Id: []byte("first"), Nodes: cluster.Nodes()}
+	second := &types.Value{Id: []byte("second"), Nodes: cluster.Nodes()}
 	require.NoError(t, cluster.Manager(1).Propose(ctx, first))
 	require.NoError(t, cluster.Manager(2).Propose(ctx, first))
 	require.NoError(t, cluster.Manager(3).Propose(ctx, second))

@@ -2,6 +2,7 @@ package consensus
 
 import (
 	"bytes"
+	"math"
 
 	"github.com/dshulyak/rapid/consensus/types"
 	"go.uber.org/zap"
@@ -19,25 +20,32 @@ func IsAny(value *types.Value) bool {
 }
 
 type Config struct {
-	Timeout                   int
-	HeartbeatTimeout          int
-	ReplicaID                 uint64
-	ClassicQuorum, FastQuorum int
-
-	// InstanceID corresponds to unique configuration.
-	InstanceID    []byte
 	Node          *atypes.Node
 	Configuration *atypes.Configuration
+
+	Timeout          int
+	HeartbeatTimeout int
+}
+
+func getFastQuorum(lth int) int {
+	return int(math.Ceil(float64(lth) * 3 / 4))
+}
+
+func getClassicQuorum(lth int) int {
+	return (lth / 2) + 1
 }
 
 func NewPaxos(logger *zap.SugaredLogger, conf Config) *Paxos {
-	logger = logger.Named("paxos").With("node", conf.ReplicaID)
+	logger = logger.Named("paxos").With("node", conf.Node.ID)
 	return &Paxos{
 		conf:               conf,
-		instanceID:         conf.InstanceID,
+		replicaID:          conf.Node.ID,
+		instanceID:         conf.Configuration.ID,
 		mainLogger:         logger,
 		logger:             logger,
 		replicas:           newReplicasInfo(conf.Configuration.Nodes),
+		classicQuorum:      getClassicQuorum(len(conf.Configuration.Nodes)),
+		fastQuorum:         getFastQuorum(len(conf.Configuration.Nodes)),
 		promiseAggregates:  map[uint64]*aggregate{},
 		acceptedAggregates: map[uint64]*aggregate{},
 		log:                newValues(),
@@ -53,10 +61,11 @@ var _ Backend = (*Paxos)(nil)
 type Paxos struct {
 	conf Config
 
-	// instanceID changes when new configuration is applied.
-	// paxos instance should not accept messages from other instances, except for the Learned message
-	// if they are with higher sequence number.
-	instanceID []byte
+	replicaID uint64
+
+	// instanceID and classic/fast quorums must be updated after each configuration commit.
+	instanceID                uint64
+	classicQuorum, fastQuorum int
 
 	// logger is extended with context information
 	mainLogger, logger *zap.SugaredLogger
@@ -102,7 +111,7 @@ func (p *Paxos) Tick() {
 		}
 	} else if p.elected && p.hbmsg != nil {
 		p.replicas.iterate(func(state *replicaState) bool {
-			if state.id == p.conf.ReplicaID {
+			if state.id == p.replicaID {
 				return true
 			}
 			state.ticks++
@@ -142,7 +151,7 @@ func (p *Paxos) Propose(value *types.Value) {
 
 func (p *Paxos) slowBallot(bal uint64) {
 	seq := p.log.commited() + 1
-	p.promiseAggregates[seq] = newAggregate(p.conf.FastQuorum)
+	p.promiseAggregates[seq] = newAggregate(p.fastQuorum)
 	p.logger.Debug("started election ballot.",
 		" ballot=", bal,
 		" sequence=", seq,
@@ -168,9 +177,11 @@ func (p *Paxos) commit(values ...*types.LearnedValue) {
 		if v.Sequence > p.log.commited() {
 			p.values = append(p.values, v)
 			p.log.commit(v)
-			p.logger.Info("updating configuration to=", v.Value)
-			p.instanceID = v.Value.Id
+			p.logger.With("value", v.Value).Info("updating configuration")
+			p.instanceID = v.Sequence
 			p.replicas.update(v.Value.Changes)
+			p.classicQuorum = getClassicQuorum(len(v.Value.Nodes))
+			p.fastQuorum = getFastQuorum(len(v.Value.Nodes))
 			// TODO if node with id was removed from cluster - panic and make application
 			// bootstrap itself again
 		}
@@ -192,23 +203,23 @@ func (p *Paxos) send(original *types.Message) {
 }
 
 func (p *Paxos) sendOne(msg *types.Message, to uint64) {
-	msg = types.WithRouting(p.conf.ReplicaID, to, msg)
+	msg = types.WithRouting(p.replicaID, to, msg)
 	msg = types.WithInstance(p.instanceID, msg)
 	p.replicas.resetTicks(to)
-	if msg.To == p.conf.ReplicaID {
-		p.logger.Debug("sending to self=", msg)
+	if msg.To == p.replicaID {
+		p.logger.With("msg", msg).Debug("sending to self")
 		p.Step(msg)
 		return
 	}
-	p.logger.Debug("sending=", msg)
+	p.logger.With("msg", msg).Debug("sending to network")
 	p.messages = append(p.messages, msg)
 }
 
 func (p *Paxos) Step(msg *types.Message) {
-	p.logger = p.mainLogger.With("ballot", p.ballot)
-	p.logger.Debug("processing=", msg.String())
-	if msg.To != p.conf.ReplicaID {
-		p.logger.Error("delivered to wrong node.", " message=", msg)
+	p.logger = p.mainLogger.With("ballot", p.ballot, "msg", msg)
+	p.logger.Debug("step")
+	if msg.To != p.replicaID {
+		p.logger.Error("delivered to wrong node.")
 		return
 	}
 
@@ -217,7 +228,7 @@ func (p *Paxos) Step(msg *types.Message) {
 		return
 	}
 
-	if bytes.Compare(msg.InstanceID, p.instanceID) != 0 {
+	if msg.InstanceID != p.instanceID {
 		return
 	}
 
@@ -240,7 +251,7 @@ func (p *Paxos) stepPrepare(msg *types.Message) {
 	prepare := msg.GetPrepare()
 	if prepare.Ballot <= p.ballot {
 		// return only a ballot for the sender to update himself
-		p.logger.Debug("prepare with old ballot.", " current=", p.ballot, " prepare=", prepare.Ballot)
+		p.logger.Debug("old ballot.")
 		p.sendOne(types.NewFailedPromiseMessage(p.ballot), msg.From)
 		return
 	}
@@ -276,7 +287,7 @@ func (p *Paxos) stepPrepare(msg *types.Message) {
 func (p *Paxos) stepPromise(msg *types.Message) {
 	promise := msg.GetPromise()
 	if promise.Ballot > p.ballot {
-		p.logger.Debug("received newer ballot in promise=", msg)
+		p.logger.Debug("received newer ballot in promise.")
 		p.ballot = promise.Ballot
 		p.renounceLeadership()
 		return
@@ -290,7 +301,7 @@ func (p *Paxos) stepPromise(msg *types.Message) {
 
 	agg, exist := p.promiseAggregates[promise.Sequence]
 	if !exist {
-		p.logger.Debug("skipping promise=", msg)
+		p.logger.Debug("skipping promise.")
 		return
 	}
 
@@ -299,14 +310,10 @@ func (p *Paxos) stepPromise(msg *types.Message) {
 		p.logger.Info("node is elected")
 		p.elected = true
 		delete(p.promiseAggregates, promise.Sequence)
-		p.acceptedAggregates[promise.Sequence] = newAggregate(p.conf.FastQuorum)
+		p.acceptedAggregates[promise.Sequence] = newAggregate(p.fastQuorum)
 
 		value, _ := agg.safe()
-		p.logger.Debug("waiting for accepted messages.",
-			" ballot=", p.ballot,
-			" sequence=", promise.Sequence,
-			" is-any=", value == nil,
-		)
+		p.logger.With("is-any", value == nil).Debug("waiting for accepted messages.")
 		if value == nil {
 			value = anyValue
 
@@ -354,7 +361,7 @@ func (p *Paxos) stepAccept(msg *types.Message) {
 		Sequence: accept.Sequence,
 		Value:    value,
 	}
-	p.logger.Debug("accepted value=", learned)
+	p.logger.With("value", value).Debug("accepted")
 	p.log.add(learned)
 	p.sendOne(types.NewAcceptedMessage(accept.Ballot, accept.Sequence, value), msg.From)
 	p.pendingAccept = nil
@@ -375,10 +382,7 @@ func (p *Paxos) stepAccepted(msg *types.Message) {
 	}
 	agg, exist := p.acceptedAggregates[accepted.Sequence]
 	if !exist {
-		p.logger.Debug("skipping accepted.",
-			" ballot=", accepted.Ballot,
-			" sequence=", accepted.Sequence,
-			" from=", msg.From)
+		p.logger.Debug("skipping accepted.")
 		return
 	}
 	agg.add(msg.From, accepted.Ballot, accepted.Value)
@@ -399,15 +403,11 @@ func (p *Paxos) stepAccepted(msg *types.Message) {
 			} else {
 				bal := p.ballot
 				seq := p.log.commited() + 1
-				p.logger.Debug("waiting for accepted messages.",
-					" ballot=", bal,
-					" sequence=", seq,
-					" is-any=", true,
-				)
+				p.logger.Debug("waiting for ANY accepted messages.")
 				msg := types.NewAcceptMessage(bal, seq, anyValue)
 				p.hbmsg = msg
 				p.send(msg)
-				p.acceptedAggregates[seq] = newAggregate(p.conf.FastQuorum)
+				p.acceptedAggregates[seq] = newAggregate(p.fastQuorum)
 			}
 			return
 		}
@@ -415,7 +415,7 @@ func (p *Paxos) stepAccepted(msg *types.Message) {
 		if value == nil {
 			value = agg.any()
 		}
-		p.acceptedAggregates[accepted.Sequence] = newAggregate(p.conf.FastQuorum)
+		p.acceptedAggregates[accepted.Sequence] = newAggregate(p.fastQuorum)
 		next := p.ballot + 1
 		p.ballot = next
 		p.send(types.NewAcceptMessage(next, accepted.Sequence, value))
@@ -434,7 +434,7 @@ func (p *Paxos) stepLearned(msg *types.Message) {
 func (p *Paxos) updateReplicas() {
 	commited := p.log.commited()
 	p.replicas.iterate(func(state *replicaState) bool {
-		if state.id == p.conf.ReplicaID {
+		if state.id == p.replicaID {
 			return true
 		}
 		if state.sequence >= commited {
@@ -453,7 +453,7 @@ func (p *Paxos) skipPrepareAllowed() bool {
 		if commited >= state.sequence {
 			count++
 		}
-		return count != p.conf.FastQuorum
+		return count != p.fastQuorum
 	})
-	return count >= p.conf.FastQuorum
+	return count >= p.fastQuorum
 }

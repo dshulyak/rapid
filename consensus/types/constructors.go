@@ -1,6 +1,6 @@
 package types
 
-func WithInstance(instance []byte, msg *Message) *Message {
+func WithInstance(instance uint64, msg *Message) *Message {
 	msg.InstanceID = instance
 	return msg
 }
