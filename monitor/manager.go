@@ -63,7 +63,7 @@ type NetworkService interface {
 }
 
 // TODO pass configuration instead of kg
-func NewManager(logger *zap.SugaredLogger, conf Config, cluster *types.Configuration, fd FailureDetector, netsvc NetworkService) Manager {
+func NewManager(logger *zap.SugaredLogger, conf Config, cluster *types.Configuration, fd FailureDetector, netsvc NetworkService) *Manager {
 	kg := NewKGraph(conf.K, cluster.Nodes)
 	am := NewAlertsReactor(logger, conf.TimeoutPeriod, NewAlerts(logger, kg, conf))
 	mon := NewMonitor(logger, conf.ID, fd, am, kg)
@@ -73,7 +73,7 @@ func NewManager(logger *zap.SugaredLogger, conf Config, cluster *types.Configura
 		alerts: am,
 	}
 	netsvc.Register(handler)
-	return Manager{
+	return &Manager{
 		logger:   logger,
 		conf:     conf,
 		mon:      mon,
@@ -100,7 +100,7 @@ type Manager struct {
 	network NetworkService
 }
 
-func (m Manager) Run(ctx context.Context) error {
+func (m *Manager) Run(ctx context.Context) error {
 	group, ctx := errgroup.WithContext(ctx)
 	group.Go(func() error {
 		return m.alerts.Run(ctx)
@@ -115,11 +115,11 @@ func (m Manager) Run(ctx context.Context) error {
 	return group.Wait()
 }
 
-func (m Manager) Changes() <-chan []*types.Change {
+func (m *Manager) Changes() <-chan []*types.Change {
 	return m.alerts.Changes()
 }
 
-func (m Manager) Update(cluster *types.Configuration) {
+func (m *Manager) Update(cluster *types.Configuration) {
 	kg := NewKGraph(m.conf.K, cluster.Nodes)
 	m.alerts.Update(kg)
 	m.mon.Update(kg)
@@ -129,7 +129,7 @@ func (m Manager) Update(cluster *types.Configuration) {
 	m.configID = cluster.ID
 }
 
-func (m Manager) Join(ctx context.Context) (err error) {
+func (m *Manager) Join(ctx context.Context) (err error) {
 	m.kg.IterateObservers(m.conf.ID, func(n *types.Node) bool {
 		err = m.network.Join(ctx, m.configID, n, m.conf.Node)
 		if err != nil {

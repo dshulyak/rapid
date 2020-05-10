@@ -1,0 +1,22 @@
+syntax = "proto3";
+
+option go_package = "github.com/dshulyak/rapid/bootstrap/network/grpc/service";
+
+import "types/types.proto";
+
+message JoinRequest {
+  uint64 nodeID = 1;
+};
+
+message JoinResponse {
+  enum Status {
+    OK = 0;
+    NODE_ID_CONFLICT = 1;
+  }
+  Status status = 1;
+  types.Configuration configuration = 2;
+};
+
+service Bootstrap {
+  rpc Join(JoinRequest) returns (JoinResponse) {}
+}

@@ -33,7 +33,7 @@ type testCluster struct {
 
 	fd monitor.FailureDetector
 
-	managers []monitor.Manager
+	managers []*monitor.Manager
 
 	group  *errgroup.Group
 	ctx    context.Context
@@ -116,7 +116,7 @@ func TestManagerJoin(t *testing.T) {
 		select {
 		case cut := <-m.Changes():
 			cuts = append(cuts, cut)
-		case <-time.After(time.Second):
+		case <-time.After(10 * time.Second):
 			require.FailNow(t, "timed out waitign for changes")
 		}
 	}
@@ -151,7 +151,7 @@ func TestManagerDetectFailed(t *testing.T) {
 		select {
 		case cut := <-m.Changes():
 			cuts = append(cuts, cut)
-		case <-time.After(time.Second):
+		case <-time.After(10 * time.Second):
 			require.FailNow(t, "timed out waitign for changes")
 		}
 	}

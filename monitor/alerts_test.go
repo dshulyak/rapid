@@ -203,9 +203,10 @@ func TestAlertsReinforce(t *testing.T) {
 	alerts.Observe(alert)
 	alerts.Tick()
 	pending := alerts.Pending()
-	require.Len(t, pending, 1)
-	require.Equal(t, 1, int(pending[0].Observer))
-	require.Equal(t, alert.Change, pending[0].Change)
+	require.Len(t, pending, 2)
+	require.Equal(t, alert, pending[0])
+	require.Equal(t, 1, int(pending[1].Observer))
+	require.Equal(t, alert.Change, pending[1].Change)
 }
 
 func TestJoinedNonexisting(t *testing.T) {
