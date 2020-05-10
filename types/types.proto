@@ -7,7 +7,7 @@ message Node {
   uint64 ID = 1;
   string IP = 2;
   uint64 port = 3;
-  repeated bytes topics = 4;
+  map<string, string> config = 4;
 }
 
 message Configuration {

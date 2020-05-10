@@ -34,11 +34,9 @@ func NewCluster(n int, tick time.Duration, jitter int64) *Cluster {
 			Node:             conf.Nodes[i-1],
 			Configuration:    conf,
 		}
-		pax := consensus.NewPaxos(logger, conf)
 		tick := tick + time.Duration(rand.Int63n(jitter))*time.Millisecond
-		cons := consensus.NewConsensus(logger.With("node", uint64(i)), pax, tick)
-		swarm := inproc.NewSwarm(logger, network, uint64(i))
-		managers[uint64(i)] = consensus.NewManager(logger.With("node", uint64(i)), cons, swarm)
+		swarm := inproc.New(logger, network, uint64(i))
+		managers[uint64(i)] = consensus.NewManager(logger.With("node", uint64(i)), swarm, conf, tick)
 	}
 
 	ctx, cancel := context.WithCancel(context.Background())

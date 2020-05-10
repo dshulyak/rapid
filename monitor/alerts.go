@@ -9,7 +9,6 @@ import (
 )
 
 type Config struct {
-	ID                uint64
 	Node              *types.Node
 	K                 int
 	LW, HW            int
@@ -22,7 +21,7 @@ func NewAlerts(logger *zap.SugaredLogger, kg *KGraph, conf Config) *Alerts {
 	alerts := &Alerts{
 		conf:       conf,
 		logger:     logger,
-		id:         conf.ID,
+		id:         conf.Node.ID,
 		reinforce:  conf.ReinforceTimeout,
 		observed:   map[uint64]*observedAlert{},
 		retransmit: conf.RetransmitTimeout,

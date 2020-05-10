@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"sync"
+	"time"
 
 	"github.com/dshulyak/rapid/consensus/types"
 	atypes "github.com/dshulyak/rapid/types"
@@ -19,13 +20,14 @@ var (
 
 type ConsumeFn func(context.Context, *types.Message) error
 
-type Swarm interface {
+type NetworkService interface {
 	Send(context.Context, *types.Message) error
 	Register(ConsumeFn)
 	Update(*atypes.Changes) error
 }
 
-func NewManager(logger *zap.SugaredLogger, cons *Consensus, swarm Swarm) *Manager {
+func NewManager(logger *zap.SugaredLogger, swarm NetworkService, conf Config, tick time.Duration) *Manager {
+	cons := NewConsensus(logger, NewPaxos(logger, conf), tick)
 	swarm.Register(func(_ context.Context, msg *types.Message) error {
 		// if context is nil and queue is full message will be dropped
 		if err := cons.Receive(nil, []*types.Message{msg}); err != nil {
@@ -46,7 +48,7 @@ func NewManager(logger *zap.SugaredLogger, cons *Consensus, swarm Swarm) *Manage
 type Manager struct {
 	logger    *zap.SugaredLogger
 	consensus *Consensus
-	swarm     Swarm
+	swarm     NetworkService
 
 	bus *valuesBus
 }

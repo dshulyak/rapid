@@ -62,14 +62,13 @@ type NetworkService interface {
 	Join(ctx context.Context, configID uint64, observer, subject *types.Node) error
 }
 
-// TODO pass configuration instead of kg
 func NewManager(logger *zap.SugaredLogger, conf Config, cluster *types.Configuration, fd FailureDetector, netsvc NetworkService) *Manager {
 	kg := NewKGraph(conf.K, cluster.Nodes)
 	am := NewAlertsReactor(logger, conf.TimeoutPeriod, NewAlerts(logger, kg, conf))
-	mon := NewMonitor(logger, conf.ID, fd, am, kg)
+	mon := NewMonitor(logger, conf.Node.ID, fd, am, kg)
 	handler := NetworkHandler{
 		logger: logger,
-		id:     conf.ID,
+		id:     conf.Node.ID,
 		alerts: am,
 	}
 	netsvc.Register(handler)
@@ -130,7 +129,7 @@ func (m *Manager) Update(cluster *types.Configuration) {
 }
 
 func (m *Manager) Join(ctx context.Context) (err error) {
-	m.kg.IterateObservers(m.conf.ID, func(n *types.Node) bool {
+	m.kg.IterateObservers(m.conf.Node.ID, func(n *types.Node) bool {
 		err = m.network.Join(ctx, m.configID, n, m.conf.Node)
 		if err != nil {
 			return false

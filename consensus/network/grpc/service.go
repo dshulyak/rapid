@@ -14,12 +14,12 @@ import (
 	"google.golang.org/grpc"
 )
 
-func New(logger *zap.SugaredLogger, srv *grpc.Server, config *types.Configuration) *Swarm {
+func New(logger *zap.SugaredLogger, srv *grpc.Server, config *types.Configuration) *Service {
 	nodes := map[uint64]*types.Node{}
 	for _, n := range config.Nodes {
 		nodes[n.ID] = n
 	}
-	return &Swarm{
+	return &Service{
 		srv:    srv,
 		logger: logger.Named("grpc"),
 		config: nodes,
@@ -27,9 +27,11 @@ func New(logger *zap.SugaredLogger, srv *grpc.Server, config *types.Configuratio
 	}
 }
 
+var _ consensus.NetworkService = (*Service)(nil)
+
 // TODO big issue. connections are not closed.
 // define contracts for closing unused connections and general cleanup.
-type Swarm struct {
+type Service struct {
 	srv    *grpc.Server
 	logger *zap.SugaredLogger
 
@@ -39,7 +41,7 @@ type Swarm struct {
 	pool map[uint64]service.ConsensusClient
 }
 
-func (s *Swarm) Update(changes *types.Changes) error {
+func (s *Service) Update(changes *types.Changes) error {
 	if changes == nil {
 		return nil
 	}
@@ -60,7 +62,7 @@ func (s *Swarm) Update(changes *types.Changes) error {
 	return nil
 }
 
-func (s *Swarm) Send(ctx context.Context, msg *ctypes.Message) error {
+func (s *Service) Send(ctx context.Context, msg *ctypes.Message) error {
 	s.mu.RLock()
 	if client, exist := s.pool[msg.To]; exist {
 		defer s.mu.RUnlock()
@@ -91,7 +93,7 @@ func (s *Swarm) Send(ctx context.Context, msg *ctypes.Message) error {
 	return err
 }
 
-func (s *Swarm) Register(fn consensus.ConsumeFn) {
+func (s *Service) Register(fn consensus.ConsumeFn) {
 	service.RegisterConsensusServer(s.srv, consumer(fn))
 }
 
