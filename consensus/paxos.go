@@ -90,12 +90,13 @@ type Paxos struct {
 	proposed           *queue
 
 	// pendingAccept is not nil if node is ready to send Accept with proposed value
-	// right when proposed value is delivered.
+	// instead of queuing proposal.
 	pendingAccept *types.Message
 
 	log    *values
 	ballot uint64
 
+	// messages are consumed by paxos reactor and are will be sent over the network
 	messages []*types.Message
 	// values meant to be consumed by state machine application.
 	values []*types.LearnedValue
@@ -319,7 +320,6 @@ func (p *Paxos) stepPromise(msg *types.Message) {
 		p.logger.With("is-any", value == nil).Debug("waiting for accepted messages.")
 		if value == nil {
 			value = anyValue
-
 		}
 		msg := types.NewAcceptMessage(p.ballot, promise.Sequence, value)
 		p.hbmsg = msg
