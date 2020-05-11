@@ -7,6 +7,12 @@ all replicas will agree on the same set of changes.
 Based on the [Fast Paxos](#1-lamport-fast-paxos-2015) and [Fast Paxos. Made Easy](#2-zhao-fast-paxos-made-easy) that simplifies rule for choosing safe value.
 And borrowing ideas for leader election and replication from [Paxos lecture from raft case study](#3-ousterhout-paxos-lecture-from-raft-study).
 
+
+TLA++
+---
+
+WIP [TLA++ spec](./tla/Consensus.tla).
+
 Messages
 ---
 
@@ -85,8 +91,8 @@ Each node must store current ballot.
 Each node must store last commited configuration.
 Each node must store picked value and ballot when value was picked.
 
-Coordinator maintains last commited configuration ID for every replica.
-
+Coordinator maintains last commited configuration ID for every replica
+.
 #### Phases
 
 ###### Phase-1-A
