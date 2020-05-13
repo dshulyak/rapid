@@ -28,10 +28,10 @@ type NetworkService interface {
 
 func NewManager(logger *zap.SugaredLogger, swarm NetworkService, conf Config, tick time.Duration) *Manager {
 	cons := NewConsensus(logger, NewPaxos(logger, conf), tick)
-	swarm.Register(func(_ context.Context, msg *types.Message) error {
+	swarm.Register(func(ctx context.Context, msg *types.Message) error {
 		// if context is nil and queue is full message will be dropped
-		if err := cons.Receive(nil, []*types.Message{msg}); err != nil {
-			cons.logger.With("error", err).Warn("consensus doesn't accept messages.")
+		if err := cons.Receive(ctx, []*types.Message{msg}); err != nil {
+			cons.logger.With("error", err).Warn("consensus failed to accept messages.")
 		}
 		return nil
 	})
@@ -108,8 +108,6 @@ func (m *Manager) Propose(ctx context.Context, value *types.Value) error {
 	return m.consensus.Propose(ctx, value)
 }
 
-// TODO subsriber should be able to specify first non-applied value, and manager should fetch
-// all available values from persistent store and send to subscriber.
 func (m *Manager) Subscribe(ctx context.Context, values chan<- []*types.LearnedValue) {
 	m.bus.subscribe(ctx, values)
 }

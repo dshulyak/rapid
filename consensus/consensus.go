@@ -2,7 +2,6 @@ package consensus
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"time"
 
@@ -26,7 +25,7 @@ func NewConsensus(logger *zap.SugaredLogger, backend Backend, tick time.Duration
 		backend:   backend,
 		tick:      tick,
 		proposals: make(chan *types.Value, 1),
-		ingress:   make(chan []*types.Message, 100), // this is used as a fifo queue, overflow messages will be dropped with error
+		ingress:   make(chan []*types.Message, 1),
 		egress:    make(chan []*types.Message, 1),
 		values:    make(chan []*types.LearnedValue, 1),
 	}
@@ -48,19 +47,12 @@ type Consensus struct {
 }
 
 func (c *Consensus) Receive(ctx context.Context, msgs []*types.Message) error {
-	if ctx != nil {
-		select {
-		case c.ingress <- msgs:
-		case <-ctx.Done():
-			return ctx.Err()
-		}
-	}
 	select {
 	case c.ingress <- msgs:
-	default:
-		return errors.New("input queue is full")
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
 	}
-	return nil
 }
 
 func (c *Consensus) Propose(ctx context.Context, value *types.Value) error {
