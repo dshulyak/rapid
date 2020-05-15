@@ -45,7 +45,7 @@ func (m *Monitor) Run(ctx context.Context) error {
 	var (
 		group sync.WaitGroup
 		// fds is a map with cancellation functions
-		fds = map[uint64]func(){}
+		topology = map[uint64]func(){}
 	)
 	defer group.Wait()
 	for {
@@ -53,19 +53,39 @@ func (m *Monitor) Run(ctx context.Context) error {
 		case <-ctx.Done():
 			return ctx.Err()
 		case kg := <-m.graph:
+			for id := range topology {
+				old := true
+				kg.IterateSubjects(m.id, func(n *types.Node) bool {
+					if n.ID == id {
+						old = false
+						return false
+					}
+					return true
+				})
+				if old {
+					topology[id]()
+					delete(topology, id)
+				}
+			}
 			kg.IterateSubjects(m.id, func(node *types.Node) bool {
 				ctx, cancel := context.WithCancel(ctx)
-				_, exist := fds[node.ID]
+				_, exist := topology[node.ID]
 				if exist {
 					return true
 				}
-				fds[node.ID] = cancel
+				topology[node.ID] = cancel
 				group.Add(1)
 				go func(node *types.Node) {
 					defer group.Done()
+					logger := m.logger.With("node", node)
+					logger.Debug("started monitor")
 					err := m.fd.Monitor(ctx, node)
-					if err != nil && !errors.Is(err, context.Canceled) {
-						m.logger.With("node", node).Debug("detected failure")
+					if err != nil {
+						if errors.Is(err, context.Canceled) {
+							logger.Debug("failure detector interrupted")
+							return
+						}
+						logger.Debug("detected failure")
 						_ = m.am.Observe(ctx, &mtypes.Alert{
 							Observer: m.id,
 							Subject:  node.ID,

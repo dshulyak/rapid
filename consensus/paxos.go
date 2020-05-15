@@ -208,17 +208,17 @@ func (p *Paxos) sendOne(msg *types.Message, to uint64) {
 	msg = types.WithInstance(p.instanceID, msg)
 	p.replicas.resetTicks(to)
 	if msg.To == p.replicaID {
-		p.logger.With("msg", msg).Debug("sending to self")
+		//p.logger.With("msg", msg).Debug("sending to self")
 		p.Step(msg)
 		return
 	}
-	p.logger.With("msg", msg).Debug("sending to network")
+	//p.logger.With("msg", msg).Debug("sending to network")
 	p.messages = append(p.messages, msg)
 }
 
 func (p *Paxos) Step(msg *types.Message) {
 	p.logger = p.mainLogger.With("ballot", p.ballot, "msg", msg)
-	p.logger.Debug("step")
+	//p.logger.Debug("step")
 	if msg.To != p.replicaID {
 		p.logger.Error("delivered to wrong node.")
 		return

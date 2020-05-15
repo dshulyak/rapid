@@ -115,7 +115,7 @@ func (m *Manager) Run(ctx context.Context) error {
 		return m.network.Broadcast(ctx, m.alerts.Alerts())
 	})
 	group.Go(func() error {
-		defer m.logger.Info("closed monitor")
+		defer m.logger.Info("closed monitoring extension")
 		return m.mon.Run(ctx)
 	})
 	return group.Wait()

@@ -20,11 +20,14 @@ func (b Service) Update(kg *monitor.KGraph) {
 func (b Service) Broadcast(ctx context.Context, source <-chan []*mtypes.Alert) error {
 	var (
 		wg   sync.WaitGroup
-		topo = map[uint64]chan<- []*mtypes.Alert{}
+		topo = map[uint64]chan []*mtypes.Alert{}
 	)
 	for {
 		select {
 		case <-ctx.Done():
+			for id := range topo {
+				close(topo[id])
+			}
 			wg.Wait()
 			return ctx.Err()
 		case alerts := <-source:
@@ -37,6 +40,20 @@ func (b Service) Broadcast(ctx context.Context, source <-chan []*mtypes.Alert) e
 				}
 			}
 		case kg := <-b.graph:
+			for id := range topo {
+				old := true
+				kg.IterateObservers(b.id, func(n *types.Node) bool {
+					if n.ID == id {
+						old = false
+						return false
+					}
+					return true
+				})
+				if old {
+					close(topo[id])
+					delete(topo, id)
+				}
+			}
 			// close previous connection after an update
 			kg.IterateObservers(b.id, func(n *types.Node) bool {
 				n = n
@@ -69,35 +86,33 @@ func (b Service) sendLoop(ctx context.Context, n *types.Node, source <-chan []*m
 		conn   *grpc.ClientConn
 		client service.MonitorClient
 		err    error
+		logger = b.logger.With("node", n)
 	)
-	for {
-		select {
-		case <-ctx.Done():
-			return
-		case alerts := <-source:
-			if conn == nil {
-				conn, err = b.dial(ctx, n)
-				if err != nil {
-					b.logger.With(
-						"node", n,
-						"error", err,
-					).Debug("dial failed")
-					continue
-				}
-				client = service.NewMonitorClient(conn)
-			}
-			ctx, cancel := context.WithTimeout(ctx, b.sendTimeout)
-			_, err = client.Broadcast(ctx, &service.BroadcastRequest{Alerts: alerts})
+	for alerts := range source {
+		if conn == nil {
+			conn, err = b.dial(ctx, n)
 			if err != nil {
-				b.logger.With(
-					"node", n,
-					"alerts", alerts,
-					"error", err,
-				).Debug("failed to broadcast alerts")
+				logger.With("error", err).Debug("dial failed")
+				continue
 			}
-			cancel()
+			client = service.NewMonitorClient(conn)
+		}
+		ctx, cancel := context.WithTimeout(ctx, b.sendTimeout)
+		_, err = client.Broadcast(ctx, &service.BroadcastRequest{Alerts: alerts})
+		if err != nil {
+			logger.With(
+				"alerts", alerts,
+				"error", err,
+			).Debug("failed to broadcast alerts")
+		}
+		cancel()
+	}
+	if conn != nil {
+		if err := conn.Close(); err != nil {
+			logger.With("error", err).Error("failed to close connection")
 		}
 	}
+	logger.Debug("connection closed")
 }
 
 func (b Service) dial(ctx context.Context, n *types.Node) (*grpc.ClientConn, error) {
