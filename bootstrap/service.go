@@ -4,7 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"sync"
+	"sync/atomic"
 
 	"github.com/dshulyak/rapid/types"
 	"go.uber.org/zap"
@@ -21,13 +21,12 @@ type NetworkServer interface {
 }
 
 type NetworkClient interface {
-	Join(context.Context, *types.Node, uint64) (*types.Configuration, error)
+	Configuration(context.Context, *types.Node) (*types.Configuration, error)
 }
 
 func NewService(logger *zap.SugaredLogger, configuration *types.Configuration, netsrv NetworkServer) *Service {
 	svc := &Service{
 		logger: logger,
-		ids:    map[uint64]struct{}{},
 	}
 	svc.Update(configuration)
 	netsrv.Register(svc)
@@ -37,39 +36,15 @@ func NewService(logger *zap.SugaredLogger, configuration *types.Configuration, n
 type Service struct {
 	logger *zap.SugaredLogger
 
-	mu sync.Mutex
-	// commited configuration
-	configuration *types.Configuration
-	// set of taken and pending node ids. reset after each configuration update.
-	ids map[uint64]struct{}
+	config atomic.Value
 }
 
 func (s *Service) Update(configuration *types.Configuration) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	s.configuration = configuration
-	for id := range s.ids {
-		delete(s.ids, id)
-	}
-	for _, n := range configuration.Nodes {
-		s.ids[n.ID] = struct{}{}
-	}
+	s.config.Store(configuration)
 }
 
-func (s *Service) Join(ctx context.Context, id uint64) (*types.Configuration, error) {
-	logger := s.logger.With("node id", id)
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	if s.configuration == nil {
-
-	}
-	if _, exist := s.ids[id]; exist {
-		logger.Debug("id conflict")
-		return nil, fmt.Errorf("%w: conflicting id %d", ErrNodeIDConflict, id)
-	}
-	logger.Debug("id registered")
-	s.ids[id] = struct{}{}
-	return s.configuration, nil
+func (s *Service) Configuration() *types.Configuration {
+	return s.config.Load().(*types.Configuration)
 }
 
 func NewClient(logger *zap.SugaredLogger, seeds []*types.Node, netclient NetworkClient) Client {
@@ -93,9 +68,9 @@ func (c Client) Join(ctx context.Context, id uint64) (*types.Configuration, erro
 	// TODO it will be enough to get responses from majority to guarantee that we got recent configuration
 	for _, n := range c.seeds {
 		n := n
-		c.logger.With("node", n).Debug("send join")
+		c.logger.With("node", n).Debug("request configuration")
 		group.Go(func() error {
-			conf, err := c.netclient.Join(ctx, n, id)
+			conf, err := c.netclient.Configuration(ctx, n)
 			if err != nil {
 				c.logger.With(
 					"node", n,
@@ -115,6 +90,11 @@ func (c Client) Join(ctx context.Context, id uint64) (*types.Configuration, erro
 	for conf := range configurations {
 		if max == nil || max.ID < conf.ID {
 			max = conf
+		}
+	}
+	for _, other := range max.Nodes {
+		if other.ID == id {
+			return nil, fmt.Errorf("%w: id %d", ErrNodeIDConflict, id)
 		}
 	}
 	return max, nil

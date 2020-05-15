@@ -4,19 +4,8 @@ option go_package = "github.com/dshulyak/rapid/bootstrap/network/grpc/service";
 
 import "types/types.proto";
 
-message BootstrapRequest {
-  uint64 nodeID = 1;
-};
-
-message BootstrapResponse {
-  enum Status {
-    OK = 0;
-    NODE_ID_CONFLICT = 1;
-  }
-  Status status = 1;
-  types.Configuration configuration = 2;
-};
+message Empty {};
 
 service Bootstrap {
-  rpc Join(BootstrapRequest) returns (BootstrapResponse) {}
+  rpc Configuration(Empty) returns (types.Configuration) {}
 }

@@ -2,10 +2,10 @@ package grpc
 
 import (
 	"context"
-	"errors"
 
 	"github.com/dshulyak/rapid/bootstrap"
 	"github.com/dshulyak/rapid/bootstrap/network/grpc/service"
+	"github.com/dshulyak/rapid/types"
 	"google.golang.org/grpc"
 )
 
@@ -27,14 +27,6 @@ type wrapper struct {
 	*bootstrap.Service
 }
 
-func (w wrapper) Join(ctx context.Context, req *service.BootstrapRequest) (*service.BootstrapResponse, error) {
-	conf, err := w.Service.Join(ctx, req.NodeID)
-	if err != nil {
-		if errors.Is(err, bootstrap.ErrNodeIDConflict) {
-			return &service.BootstrapResponse{Status: service.BootstrapResponse_NODE_ID_CONFLICT}, nil
-		}
-	}
-	return &service.BootstrapResponse{
-		Configuration: conf,
-	}, nil
+func (w wrapper) Configuration(ctx context.Context, req *service.Empty) (*types.Configuration, error) {
+	return w.Service.Configuration(), nil
 }
