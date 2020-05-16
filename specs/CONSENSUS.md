@@ -91,25 +91,25 @@ Each node must store current ballot.
 Each node must store last commited configuration.
 Each node must store picked value and ballot when value was picked.
 
-Coordinator maintains last commited configuration ID for every replica
-.
+Coordinator maintains last commited configuration ID for every replica.
 #### Phases
 
 ###### Phase-1-A
 
 Phase executed by coordinator.
 
-When timer triggers replica will create [Prepare](#Prepare) message with incremented ballot and sequence.
+When timer triggers replica will create [Prepare](#Prepare) message with incremented ballot, and next sequence.
 
 ###### Phase-1-B
 
 Phase executed by every replica.
 Starts when new **Prepare** message received.
 
-If sequence number is less than commited value replice will reply with [Learned](#Learned) message in order to update
+If sequence number is less than commited value replica will reply with [Learned](#Learned) message in order to update
 sender configuration.
 
-If ballot is less then the local ballot replica will reply with [Promise](#Promise) message and local ballot.
+If ballot is less then the local ballot replica will reply with [Promise](#Promise) message and local ballot, in order
+to update outdated replica.
 
 If ballot is higher then the local ballot:
 - replica updates local ballot
@@ -125,7 +125,7 @@ After coordinator collected messages from Classic Quorum it will be promoted to 
 
 Coordinator needs to prepare a value to accept. Value is selected according to fast paxos safety rule:
 - if at most single value is selected in the messages from quorum - value must be selected.
-- if majority replies in quorum selected same value - value must be selected.
+- if majority replies in the quorum selected same value - value must be selected.
 - otherwise coordinator is free to pick any value.
 
 In case if value must be selected then coordinator broadcasts [Accept](#Accept) with that value.
