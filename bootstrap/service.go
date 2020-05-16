@@ -3,7 +3,6 @@ package bootstrap
 import (
 	"context"
 	"errors"
-	"fmt"
 	"sync/atomic"
 
 	"github.com/dshulyak/rapid/types"
@@ -90,11 +89,6 @@ func (c Client) Join(ctx context.Context, id uint64) (*types.Configuration, erro
 	for conf := range configurations {
 		if max == nil || max.ID < conf.ID {
 			max = conf
-		}
-	}
-	for _, other := range max.Nodes {
-		if other.ID == id {
-			return nil, fmt.Errorf("%w: id %d", ErrNodeIDConflict, id)
 		}
 	}
 	return max, nil

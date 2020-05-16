@@ -6,21 +6,17 @@ import (
 	"encoding/json"
 	"fmt"
 	"math/rand"
-	"net"
 	"time"
 
 	"github.com/dshulyak/rapid/bootstrap"
-	bgrpc "github.com/dshulyak/rapid/bootstrap/network/grpc"
 	"github.com/dshulyak/rapid/consensus"
-	cgrpc "github.com/dshulyak/rapid/consensus/network/grpc"
 	ctypes "github.com/dshulyak/rapid/consensus/types"
 	"github.com/dshulyak/rapid/monitor"
-	mgrpc "github.com/dshulyak/rapid/monitor/network/grpc"
+	"github.com/dshulyak/rapid/network/grpc"
 	"github.com/dshulyak/rapid/types"
 
 	"go.uber.org/zap"
 	"golang.org/x/sync/errgroup"
-	"google.golang.org/grpc"
 )
 
 type StringDuration time.Duration
@@ -70,6 +66,7 @@ type Config struct {
 	LowWatermark  int
 	HighWatermark int
 
+	Seed  bool
 	Seeds []*types.Node
 
 	IP   string
@@ -78,24 +75,60 @@ type Config struct {
 	DialTimeout, SendTimeout StringDuration
 }
 
-// TODO replace logger with interface and allow to initialize Rapid with factory for creating network backends.
+type Network interface {
+	BootstrapServer() bootstrap.NetworkServer
+	BootstrapClient() bootstrap.NetworkClient
+	ConsensusNetworkService(configuration *types.Configuration) consensus.NetworkService
+	MonitorNetworkService(configuration *types.Configuration, node *types.Node) monitor.NetworkService
+	Listen(ctx context.Context, node *types.Node) error
+}
+
+// TODO maybe replace logger with interface
 func New(
-	logger *zap.SugaredLogger,
+	logger *zap.Logger,
 	conf Config,
 	fd monitor.FailureDetector,
 ) Rapid {
 	return Rapid{
-		logger: logger.Named("rapid"),
+		logger: logger.Sugar().Named("rapid"),
 		conf:   conf,
 		fd:     fd,
+		network: grpc.New(
+			logger,
+			time.Duration(conf.DialTimeout),
+			time.Duration(conf.SendTimeout),
+		),
+		rng: rand.New(rand.NewSource(time.Now().Unix())),
 	}
 }
 
 type Rapid struct {
 	logger *zap.SugaredLogger
 
-	conf Config
-	fd   monitor.FailureDetector
+	conf    Config
+	fd      monitor.FailureDetector
+	network Network
+	seed    bool
+	rng     *rand.Rand
+}
+
+func (r Rapid) getNode() *types.Node {
+	if !r.conf.Seed {
+		return &types.Node{
+			IP:   r.conf.IP,
+			Port: r.conf.Port,
+			ID:   r.rng.Uint64(),
+		}
+	}
+	var node *types.Node
+	for _, n := range r.conf.Seeds {
+		if n.IP == r.conf.IP && n.Port == r.conf.Port {
+			node = n
+			break
+		}
+	}
+	return node
+
 }
 
 func (r Rapid) Run(ctx context.Context, updates chan<- *types.Configuration) error {
@@ -103,34 +136,40 @@ func (r Rapid) Run(ctx context.Context, updates chan<- *types.Configuration) err
 	defer cancel()
 	group, ctx := errgroup.WithContext(ctx)
 
-	rng := rand.New(rand.NewSource(time.Now().Unix()))
-	node := &types.Node{
-		IP:   r.conf.IP,
-		Port: r.conf.Port,
-		ID:   rng.Uint64(),
+	node := r.getNode()
+	if node == nil {
+		return fmt.Errorf("failed to initialize a node with config %v", r.conf)
 	}
 
 	r.logger.With("node", node).Info("joining cluster")
-
-	srv := grpc.NewServer()
 
 	configuration, err := r.bootstrapClient().Join(ctx, node.ID)
 	if err != nil {
 		r.logger.With("error", err).Error("step 1 join failed")
 		return err
 	}
-	r.logger.With("configuration", configuration).Debug("step 1 join succeeded. received configuration")
+	requiresJoin := true
+	for _, other := range configuration.Nodes {
+		if Compare(node, other) {
+			requiresJoin = false
+			break
+		}
+	}
+	r.logger.With(
+		"configuration", configuration,
+		"requires join", requiresJoin,
+	).Debug("received configuration from seed nodes")
 
 	cons := consensus.NewManager(
 		r.logger,
-		cgrpc.New(r.logger, srv, configuration, time.Duration(r.conf.DialTimeout), time.Duration(r.conf.SendTimeout)),
+		r.network.ConsensusNetworkService(configuration),
 		consensus.Config{
 			Node:             node,
 			Configuration:    configuration,
 			Timeout:          r.conf.ElectionTimeout,
 			HeartbeatTimeout: r.conf.HeartbeatTimeout,
 		},
-		time.Duration(r.conf.NetworkDelay)+time.Duration(rng.Int63n(int64(r.conf.NetworkDelay)/2)),
+		time.Duration(r.conf.NetworkDelay)+time.Duration(r.rng.Int63n(int64(r.conf.NetworkDelay)/2)),
 	)
 
 	mon := monitor.NewManager(
@@ -146,42 +185,33 @@ func (r Rapid) Run(ctx context.Context, updates chan<- *types.Configuration) err
 		},
 		configuration,
 		r.fd,
-		mgrpc.New(r.logger, node.ID, srv, time.Duration(r.conf.DialTimeout), time.Duration(r.conf.SendTimeout)),
+		r.network.MonitorNetworkService(configuration, node),
 	)
 
 	values := make(chan []*ctypes.LearnedValue, 1)
 	cons.Subscribe(ctx, values)
 
 	group.Go(func() error {
-		sock, err := net.Listen("tcp", fmt.Sprintf("%s:%d", node.IP, node.Port))
-		if err != nil {
-			return err
-		}
-		r.logger.With("address", sock.Addr()).Info("started grpc")
-		return srv.Serve(sock)
-	})
-
-	group.Go(func() error {
-		<-ctx.Done()
-		srv.Stop()
-		return ctx.Err()
+		return r.network.Listen(ctx, node)
 	})
 
 	group.Go(func() error {
 		return cons.Run(ctx)
 	})
 
-	if err := mon.Join(ctx); err != nil {
-		r.logger.With("error", err).Error("step 2 join failed")
-		return err
-	}
-	r.logger.Debug("step 2 join suceeded")
+	if requiresJoin {
+		r.logger.With("node", node).Debug("joining cluster")
+		if err := mon.Join(ctx); err != nil {
+			r.logger.With("error", err).Error("step 2 join failed")
+			return err
+		}
 
-	configuration, err = r.waitJoined(ctx, node.ID, values)
-	if err != nil {
-		return err
+		configuration, err = r.waitJoined(ctx, node.ID, values)
+		if err != nil {
+			return err
+		}
+		r.logger.With("configuration", configuration, "node", node).Info("node joined the cluster")
 	}
-	r.logger.With("configuration", configuration, "id", node.ID).Info("node joined the cluster")
 
 	mon.Update(configuration)
 
@@ -283,6 +313,10 @@ func (r Rapid) bootstrapClient() bootstrap.Client {
 	return bootstrap.NewClient(
 		r.logger,
 		r.conf.Seeds,
-		bgrpc.NewClient(time.Duration(r.conf.DialTimeout), time.Duration(r.conf.SendTimeout)),
+		r.network.BootstrapClient(),
 	)
+}
+
+func Compare(a, b *types.Node) bool {
+	return a.ID == b.ID && a.IP == b.IP && a.Port == b.Port
 }

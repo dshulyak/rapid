@@ -49,6 +49,7 @@ func main() {
 
 	conf.IP = *ip
 	conf.Port = *port
+	conf.Seed = *seed
 
 	fd := prober.New(logger.Sugar(), 2*time.Second, 2*time.Second, 3)
 
@@ -68,11 +69,7 @@ func main() {
 		return errors.New("interrupted")
 	})
 	group.Go(func() error {
-		if *seed {
-			return rapid.NewSeed(logger.Sugar(), conf, fd).Run(ctx, updates)
-
-		}
-		return rapid.New(logger.Sugar(), conf, fd).Run(ctx, updates)
+		return rapid.New(logger, conf, fd).Run(ctx, updates)
 	})
 	group.Go(func() error {
 		<-ctx.Done()
