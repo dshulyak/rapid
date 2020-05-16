@@ -6,12 +6,13 @@ import (
 	"testing"
 	"time"
 
-	"github.com/dshulyak/rapid/consensus/types"
+	ctypes "github.com/dshulyak/rapid/consensus/types"
+	"github.com/dshulyak/rapid/types"
 	"github.com/stretchr/testify/require"
 )
 
 // consistent tests that all values are equal to the same value from the slice with expected values.
-func consistent(t *testing.T, values <-chan []*types.LearnedValue, expected []*types.Value, total int) {
+func consistent(t *testing.T, values <-chan []*ctypes.LearnedValue, expected []*ctypes.Value, total int) {
 
 	var (
 		expectedID []byte
@@ -45,18 +46,18 @@ func TestManagerNoConflictsProgress(t *testing.T) {
 	cluster.Start()
 	defer cluster.Stop()
 
-	values := make(chan []*types.LearnedValue, 4)
+	values := make(chan []*ctypes.LearnedValue, 4)
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	cluster.Subscribe(ctx, values)
 
-	proposed := &types.Value{Id: []byte("first"), Nodes: cluster.Nodes()}
+	proposed := &ctypes.Value{Id: []byte("first"), Nodes: cluster.Nodes()}
 	require.NoError(t, cluster.Propose(ctx, proposed))
-	consistent(t, values, []*types.Value{proposed}, 4)
+	consistent(t, values, []*ctypes.Value{proposed}, 4)
 
-	proposed = &types.Value{Id: []byte("second"), Nodes: cluster.Nodes()}
+	proposed = &ctypes.Value{Id: []byte("second"), Nodes: cluster.Nodes()}
 	require.NoError(t, cluster.Propose(ctx, proposed))
-	consistent(t, values, []*types.Value{proposed}, 4)
+	consistent(t, values, []*ctypes.Value{proposed}, 4)
 }
 
 func TestManagerConflictingProgress(t *testing.T) {
@@ -64,18 +65,74 @@ func TestManagerConflictingProgress(t *testing.T) {
 	cluster.Start()
 	defer cluster.Stop()
 
-	values := make(chan []*types.LearnedValue, 4)
+	values := make(chan []*ctypes.LearnedValue, 4)
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	cluster.Subscribe(ctx, values)
 
-	first := &types.Value{Id: []byte("first"), Nodes: cluster.Nodes()}
-	second := &types.Value{Id: []byte("second"), Nodes: cluster.Nodes()}
+	first := &ctypes.Value{Id: []byte("first"), Nodes: cluster.Nodes()}
+	second := &ctypes.Value{Id: []byte("second"), Nodes: cluster.Nodes()}
 	require.NoError(t, cluster.Manager(1).Propose(ctx, first))
 	require.NoError(t, cluster.Manager(2).Propose(ctx, first))
 	require.NoError(t, cluster.Manager(3).Propose(ctx, second))
 	require.NoError(t, cluster.Manager(4).Propose(ctx, second))
 
-	expected := []*types.Value{first, second}
+	expected := []*ctypes.Value{first, second}
 	consistent(t, values, expected, 4)
+}
+
+func TestManagerReachConsensusWithTwoNodes(t *testing.T) {
+	cluster := NewCluster(2, 10*time.Millisecond, 40)
+	cluster.Start()
+	defer cluster.Stop()
+
+	values := make(chan []*ctypes.LearnedValue, 2)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	cluster.Subscribe(ctx, values)
+
+	proposed := &ctypes.Value{Id: []byte("first"), Nodes: cluster.Nodes()}
+	require.NoError(t, cluster.Propose(ctx, proposed))
+	consistent(t, values, []*ctypes.Value{proposed}, 2)
+}
+
+func TestManagerDowngrade(t *testing.T) {
+	cluster := NewCluster(3, 10*time.Millisecond, 40)
+	cluster.Start()
+	defer cluster.Stop()
+
+	values := make(chan []*ctypes.LearnedValue, 3)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	cluster.Subscribe(ctx, values)
+
+	for i := 0; i < 3; i++ {
+		add := &types.Node{ID: 777}
+		nodes := make([]*types.Node, 0, 4)
+		nodes = append(nodes, cluster.Nodes()...)
+		nodes = append(nodes, add)
+		upgrade := &ctypes.Value{
+			Id:    []byte("upgrade"),
+			Nodes: nodes,
+			Changes: &types.Changes{List: []*types.Change{
+				{
+					Type: types.Change_JOIN,
+					Node: add,
+				},
+			}}}
+		require.NoError(t, cluster.Propose(ctx, upgrade))
+		consistent(t, values, []*ctypes.Value{upgrade}, 3)
+
+		downgrade := &ctypes.Value{
+			Id:    []byte("downgrade"),
+			Nodes: cluster.Nodes(),
+			Changes: &types.Changes{List: []*types.Change{
+				{
+					Type: types.Change_REMOVE,
+					Node: add,
+				},
+			}}}
+		require.NoError(t, cluster.Propose(ctx, downgrade))
+		consistent(t, values, []*ctypes.Value{downgrade}, 3)
+	}
 }

@@ -7,7 +7,6 @@ import (
 
 	"github.com/dshulyak/rapid/types"
 	"go.uber.org/zap"
-	"golang.org/x/sync/errgroup"
 )
 
 var (
@@ -46,50 +45,21 @@ func (s *Service) Configuration() *types.Configuration {
 	return s.config.Load().(*types.Configuration)
 }
 
-func NewClient(logger *zap.SugaredLogger, seeds []*types.Node, netclient NetworkClient) Client {
+func NewClient(logger *zap.SugaredLogger, seed *types.Node, netclient NetworkClient) Client {
 	return Client{
 		logger:    logger.Named("bootstrap client"),
-		seeds:     seeds,
+		seed:      seed,
 		netclient: netclient,
 	}
 }
 
 type Client struct {
 	logger *zap.SugaredLogger
-	seeds  []*types.Node
+	seed   *types.Node
 
 	netclient NetworkClient
 }
 
-func (c Client) Join(ctx context.Context, id uint64) (*types.Configuration, error) {
-	group, ctx := errgroup.WithContext(ctx)
-	configurations := make(chan *types.Configuration, len(c.seeds))
-	// TODO it will be enough to get responses from majority to guarantee that we got recent configuration
-	for _, n := range c.seeds {
-		n := n
-		c.logger.With("node", n).Debug("request configuration")
-		group.Go(func() error {
-			conf, err := c.netclient.Configuration(ctx, n)
-			if err != nil {
-				c.logger.With(
-					"node", n,
-					"error", err,
-				).Error("join failed")
-				return err
-			}
-			configurations <- conf
-			return nil
-		})
-	}
-	if err := group.Wait(); err != nil {
-		return nil, err
-	}
-	close(configurations)
-	var max *types.Configuration
-	for conf := range configurations {
-		if max == nil || max.ID < conf.ID {
-			max = conf
-		}
-	}
-	return max, nil
+func (c Client) Join(ctx context.Context) (*types.Configuration, error) {
+	return c.netclient.Configuration(ctx, c.seed)
 }

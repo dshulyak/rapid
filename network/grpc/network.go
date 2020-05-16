@@ -14,34 +14,17 @@ import (
 	mgrpc "github.com/dshulyak/rapid/monitor/network/grpc"
 	"github.com/dshulyak/rapid/types"
 
-	grpc_middleware "github.com/grpc-ecosystem/go-grpc-middleware"
-	grpc_zap "github.com/grpc-ecosystem/go-grpc-middleware/logging/zap"
-	grpc_ctxtags "github.com/grpc-ecosystem/go-grpc-middleware/tags"
-
 	"go.uber.org/zap"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/keepalive"
 )
 
 func New(logger *zap.Logger, dialTimeout, sendTimeout time.Duration) GRPCNetwork {
-	opts := []grpc_zap.Option{
-		grpc_zap.WithLevels(grpc_zap.DefaultCodeToLevel),
-	}
-	grpc_zap.ReplaceGrpcLoggerV2(logger)
-
 	return GRPCNetwork{
 		logger:      logger.Sugar(),
 		dialTimeout: dialTimeout,
 		sendTimeout: sendTimeout,
 		srv: grpc.NewServer(
-			grpc_middleware.WithUnaryServerChain(
-				grpc_ctxtags.UnaryServerInterceptor(),
-				grpc_zap.UnaryServerInterceptor(logger, opts...),
-			),
-			grpc_middleware.WithStreamServerChain(
-				grpc_ctxtags.StreamServerInterceptor(),
-				grpc_zap.StreamServerInterceptor(logger, opts...),
-			),
 			grpc.KeepaliveParams(keepalive.ServerParameters{
 				MaxConnectionIdle: 10 * time.Minute,
 				Time:              30 * time.Minute,

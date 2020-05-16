@@ -3,6 +3,7 @@ package monitor_test
 import (
 	"context"
 	"errors"
+	"os"
 	"testing"
 	"time"
 
@@ -33,7 +34,7 @@ type testCluster struct {
 
 	fd monitor.FailureDetector
 
-	managers []*monitor.Manager
+	managers map[uint64]*monitor.Manager
 
 	group  *errgroup.Group
 	ctx    context.Context
@@ -46,6 +47,7 @@ func (tc *testCluster) setup() {
 	tc.cancel = cancel
 	group, ctx := errgroup.WithContext(ctx)
 	tc.group = group
+	tc.managers = map[uint64]*monitor.Manager{}
 	for _, n := range tc.initial.Nodes {
 		conf := tc.template
 		conf.Node = n
@@ -56,7 +58,8 @@ func (tc *testCluster) setup() {
 			tc.fd,
 			inproc.New(tc.logger, n.ID, tc.network),
 		)
-		tc.managers = append(tc.managers, man)
+		man.Update(tc.initial)
+		tc.managers[n.ID] = man
 		group.Go(func() error {
 			return man.Run(ctx)
 		})
@@ -74,13 +77,29 @@ func (tc *testCluster) stop() {
 	}
 }
 
+func nopLogger() *zap.SugaredLogger {
+	return zap.NewNop().Sugar()
+}
+
+func devLogger() *zap.SugaredLogger {
+	logger, _ := zap.NewDevelopment()
+	return logger.Sugar()
+}
+
+func testLogger() *zap.SugaredLogger {
+	if _, exist := os.LookupEnv("DEBUG_MONITOR"); exist {
+		return devLogger()
+	}
+	return nopLogger()
+}
+
 func TestManagerJoin(t *testing.T) {
 	nodes := genNodes(20)
 	net := network.NewNetwork()
 	defer net.Stop()
 
 	tc := testCluster{
-		logger:  zap.NewNop().Sugar(),
+		logger:  testLogger(),
 		initial: &types.Configuration{Nodes: nodes},
 		fd:      TestFailureDetector{},
 		network: net,
@@ -122,13 +141,13 @@ func TestManagerJoin(t *testing.T) {
 }
 
 func TestManagerDetectFailed(t *testing.T) {
-	nodes := genNodes(20)
+	nodes := genNodes(4)
 	net := network.NewNetwork()
 	defer net.Stop()
 
 	failed := TestFailureDetector{1: struct{}{}}
 	tc := testCluster{
-		logger:  zap.NewNop().Sugar(),
+		logger:  testLogger(),
 		initial: &types.Configuration{Nodes: nodes},
 		fd:      failed,
 		network: net,
@@ -145,7 +164,10 @@ func TestManagerDetectFailed(t *testing.T) {
 	defer tc.stop()
 
 	cuts := [][]*types.Change{}
-	for _, m := range tc.managers {
+	for id, m := range tc.managers {
+		if _, exist := failed[id]; exist {
+			continue
+		}
 		select {
 		case cut := <-m.Changes():
 			cuts = append(cuts, cut)
@@ -153,7 +175,7 @@ func TestManagerDetectFailed(t *testing.T) {
 			require.FailNow(t, "timed out waitign for changes")
 		}
 	}
-	require.Len(t, cuts, len(tc.managers))
+	require.Len(t, cuts, len(tc.managers)-1)
 	for _, cut := range cuts {
 		require.Len(t, cut, len(failed))
 		for _, change := range cut {

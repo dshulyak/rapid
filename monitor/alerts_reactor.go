@@ -40,7 +40,6 @@ func (r AlertsReactor) Update(kg *KGraph) {
 }
 
 func (r AlertsReactor) Observe(ctx context.Context, alert *mtypes.Alert) error {
-	r.logger.With("alert", alert).Debug("observed")
 	select {
 	case r.incoming <- alert:
 	case <-ctx.Done():

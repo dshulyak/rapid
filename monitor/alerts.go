@@ -20,7 +20,7 @@ type Config struct {
 func NewAlerts(logger *zap.SugaredLogger, kg *KGraph, conf Config) *Alerts {
 	alerts := &Alerts{
 		conf:       conf,
-		logger:     logger.Named("alerts"),
+		logger:     logger.With("ID", conf.Node.ID).Named("alerts"),
 		id:         conf.Node.ID,
 		reinforce:  conf.ReinforceTimeout,
 		observed:   map[uint64]*observedAlert{},
@@ -84,7 +84,7 @@ func (a *Alerts) Update(kg *KGraph) {
 		"K", a.kg.K,
 		"LW", a.lw,
 		"HW", a.hw,
-	).Info("updated alerts reactor")
+	).Debug("updated alerts reactor")
 	for id := range a.observed {
 		delete(a.observed, id)
 	}
@@ -98,12 +98,14 @@ func (a *Alerts) Tick() {
 	a.rticks++
 	if a.rticks == a.retransmit {
 		// TODO retransmit each alert only N times
-		a.logger.With(
-			"alerts", len(a.alerts),
-			"ticks", a.rticks,
-			"retransmit", a.retransmit,
-		).Debug("retransmit")
-		a.pending = append(a.pending, a.alerts...)
+		if len(a.alerts) > 0 {
+			a.logger.With(
+				"alerts", len(a.alerts),
+				"ticks", a.rticks,
+				"retransmit", a.retransmit,
+			).Debug("retransmit")
+			a.pending = append(a.pending, a.alerts...)
+		}
 	}
 	for _, observed := range a.observed {
 		if len(observed.received) < a.lw {
@@ -133,10 +135,11 @@ func (a *Alerts) Tick() {
 }
 
 func (a *Alerts) Observe(alert *mtypes.Alert) {
-	a.logger.With("alert", alert).Debug("observed new")
+	if alert.Subject == a.id {
+		return
+	}
 	// FIXME can be more efficient, no need to loop through same stuff on every iteration
 
-	// record alert from our node in both sets, for sending and retransmission
 	observed := a.observed[alert.Subject]
 	if observed == nil {
 		observed = &observedAlert{change: alert.Change, id: alert.Subject, received: map[uint64]struct{}{}}
@@ -152,9 +155,14 @@ func (a *Alerts) Observe(alert *mtypes.Alert) {
 		return
 	}
 
-	if alert.Observer == a.id {
-		a.alerts = append(a.alerts, alert)
-	}
+	a.logger.With(
+		"observer", alert.Observer,
+		"subject", alert.Subject,
+		"change type", alert.Change.Type,
+	).Debug("observed first time")
+	// record alert from our node in both sets, for sending and retransmission
+
+	a.alerts = append(a.alerts, alert)
 	a.pending = append(a.pending, alert)
 
 	observed.received[alert.Observer] = struct{}{}
@@ -165,7 +173,10 @@ func (a *Alerts) Observe(alert *mtypes.Alert) {
 		}
 		return true
 	})
-
+	a.logger.With(
+		"subject", alert.Subject,
+		"count", count,
+	).Debug("subject count")
 	// [lw, hw)
 	if count >= a.lw && count < a.hw {
 		// check if observers of the unstable subject are unstable themself
@@ -210,22 +221,23 @@ func (a *Alerts) Observe(alert *mtypes.Alert) {
 	// pick list of candidates, but detect them only if all of them are stable
 	var candidates []*observedAlert
 	for _, other := range a.observed {
-		othercnt := 0
+		count := 0
 		a.kg.IterateObservers(other.id, func(n *types.Node) bool {
 			if _, exist := other.received[n.ID]; exist {
-				othercnt++
+				count++
 			}
 			return true
 		})
 		// cut is detected only if there are no other unstable alerts
-		if othercnt >= a.lw && othercnt < a.hw {
+		if count >= a.lw && count < a.hw {
 			return
 		}
-		if othercnt >= a.hw && !other.detected {
+		if count >= a.hw && !other.detected {
 			candidates = append(candidates, other)
 		}
 	}
 	for _, cand := range candidates {
+		a.logger.With("change", cand.change).Info("detected change")
 		cand.detected = true
 		a.cuts = append(a.cuts, cand.change)
 	}

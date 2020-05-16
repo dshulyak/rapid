@@ -16,7 +16,7 @@ type FailureDetector interface {
 
 func NewMonitor(logger *zap.SugaredLogger, id uint64, fd FailureDetector, am AlertsReactor) *Monitor {
 	return &Monitor{
-		logger: logger.Named("monitor"),
+		logger: logger.Named("monitor").With("node ID", id),
 		id:     id,
 		fd:     fd,
 		am:     am,
@@ -78,14 +78,14 @@ func (m *Monitor) Run(ctx context.Context) error {
 				go func(node *types.Node) {
 					defer group.Done()
 					logger := m.logger.With("node", node)
-					logger.Debug("started monitor")
+					logger.Debug("started failure detector instance")
 					err := m.fd.Monitor(ctx, node)
 					if err != nil {
 						if errors.Is(err, context.Canceled) {
 							logger.Debug("failure detector interrupted")
 							return
 						}
-						logger.Debug("detected failure")
+						logger.Info("detected failure")
 						_ = m.am.Observe(ctx, &mtypes.Alert{
 							Observer: m.id,
 							Subject:  node.ID,

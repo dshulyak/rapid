@@ -88,7 +88,7 @@ func (c *Consensus) Run(ctx context.Context) (err error) {
 	)
 	defer ticker.Stop()
 
-	c.logger.With("tick", c.tick).Info("starting consensus with ticker period")
+	c.logger.With("period", c.tick).Info("starting consensus reactor")
 	for {
 		// TODO if either outmsgs or values grow out of bounds (define in constructor)
 		// consensus should fail with irrecoverable error
@@ -108,21 +108,19 @@ func (c *Consensus) Run(ctx context.Context) (err error) {
 			return
 		case <-ticker.C:
 			c.backend.Tick()
-			outmsgs = append(outmsgs, c.backend.Messages()...)
 		case value := <-c.proposals:
 			c.backend.Propose(value)
-			outmsgs = append(outmsgs, c.backend.Messages()...)
 		case inmsgs := <-c.ingress:
 			for i := range inmsgs {
 				c.backend.Step(inmsgs[i])
 			}
-			outmsgs = append(outmsgs, c.backend.Messages()...)
-			values = append(values, c.backend.Values()...)
 		case egress <- outmsgs:
 			outmsgs = nil
 		case valchan <- values:
 			values = nil
 		}
+		outmsgs = append(outmsgs, c.backend.Messages()...)
+		values = append(values, c.backend.Values()...)
 	}
 	return
 }

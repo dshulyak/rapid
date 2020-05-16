@@ -70,7 +70,6 @@ func (s *Service) Update(changes *types.Changes) error {
 func (s *Service) Send(ctx context.Context, msg *ctypes.Message) error {
 	s.mu.RLock()
 	if _, exist := s.pool[msg.To]; exist {
-		s.logger.With("to", msg.To).Debug("connection exist")
 		defer s.mu.RUnlock()
 		// TODO send options?
 		return s.send(ctx, msg)
@@ -87,8 +86,6 @@ func (s *Service) Send(ctx context.Context, msg *ctypes.Message) error {
 		return fmt.Errorf("no address for peer %d", msg.To)
 	}
 	addr := fmt.Sprintf("%s:%d", conf.IP, conf.Port)
-	s.logger.With("addr", addr).Debug("dialing")
-
 	dctx, cancel := context.WithTimeout(ctx, s.dialTimeout)
 	conn, err := grpc.DialContext(dctx, addr, grpc.WithInsecure(), grpc.WithBlock())
 	cancel()

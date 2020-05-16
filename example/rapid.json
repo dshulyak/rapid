@@ -1,18 +1,13 @@
 {
-    "NetworkDelay": "500ms",
-    "ElectionTimeout": 10,
-    "HeartbeatTimeout": 5,
-    "ReinforceTimeout": 10,
-    "RetransmitTimeout": 10,
+    "NetworkDelay": "100ms",
+    "ElectionTimeout": 40,
+    "HeartbeatTimeout": 15,
+    "ReinforceTimeout": 100,
+    "RetransmitTimeout": 1000,
     "Connectivity": 5,
     "LowWatermark": 3,
     "HighWatermark": 5,
     "DialTimeout": "500ms",
     "SendTimeout": "500ms",
-    "Seeds": [
-        {"IP": "0.0.0.0", "Port": 4001, "ID": 1},
-        {"IP": "0.0.0.0", "Port": 4002, "ID": 2},
-        {"IP": "0.0.0.0", "Port": 4003, "ID": 3},
-        {"IP": "0.0.0.0", "Port": 4004, "ID": 4}
-    ]
+    "Seed": {"IP": "0.0.0.0", "Port": 4001}
 }

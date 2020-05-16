@@ -2,6 +2,7 @@ package consensus
 
 import (
 	"bytes"
+	"encoding/hex"
 	"math"
 
 	"github.com/dshulyak/rapid/consensus/types"
@@ -117,7 +118,6 @@ func (p *Paxos) Tick() {
 			}
 			state.ticks++
 			if state.ticks >= p.conf.HeartbeatTimeout {
-				p.logger.With("to", state.id).Debug("hearbeat")
 				msg := *p.hbmsg
 				p.sendOne(
 					&msg,
@@ -132,20 +132,25 @@ func (p *Paxos) Tick() {
 
 func (p *Paxos) Propose(value *types.Value) {
 	if p.pendingAccept != nil {
-		p.logger.Debug("accepted proposed value=", value)
+		p.logger.With(
+			"value ID", hex.EncodeToString(value.Id),
+		).Debug("accepted proposed value")
 		accept := p.pendingAccept.GetAccept()
 		p.log.add(&types.LearnedValue{
 			Ballot:   accept.Ballot,
 			Sequence: accept.Sequence,
 			Value:    value,
 		})
+		msg := p.pendingAccept
+		p.pendingAccept = nil
 		p.sendOne(
 			types.NewAcceptedMessage(accept.Ballot, accept.Sequence, value),
-			p.pendingAccept.From,
+			msg.From,
 		)
-		p.pendingAccept = nil
 	} else {
-		p.logger.Debug("queued proposed value=", value)
+		p.logger.With(
+			"value ID", hex.EncodeToString(value.Id),
+		).Debug("added value to queue")
 		p.proposed.add(value)
 	}
 }
@@ -178,11 +183,15 @@ func (p *Paxos) commit(values ...*types.LearnedValue) {
 		if v.Sequence > p.log.commited() {
 			p.values = append(p.values, v)
 			p.log.commit(v)
-			p.logger.With("value", v.Value).Info("updating configuration")
 			p.instanceID = v.Sequence
 			p.replicas.update(v.Value.Changes)
 			p.classicQuorum = getClassicQuorum(len(v.Value.Nodes))
 			p.fastQuorum = getFastQuorum(len(v.Value.Nodes))
+			p.logger.With(
+				"sequence", v.Sequence,
+				"classic", p.classicQuorum,
+				"fast", p.fastQuorum,
+			).Info("updating configuration")
 			// TODO if node with id was removed from cluster - panic and make application
 			// bootstrap itself again
 		}
@@ -208,21 +217,29 @@ func (p *Paxos) sendOne(msg *types.Message, to uint64) {
 	msg = types.WithInstance(p.instanceID, msg)
 	p.replicas.resetTicks(to)
 	if msg.To == p.replicaID {
-		//p.logger.With("msg", msg).Debug("sending to self")
+		p.logger.With("msg", msg).Debug("sending to self")
 		p.Step(msg)
 		return
 	}
-	//p.logger.With("msg", msg).Debug("sending to network")
+	p.logger.With("msg", msg).Debug("sending to network")
 	p.messages = append(p.messages, msg)
 }
 
 func (p *Paxos) Step(msg *types.Message) {
-	p.logger = p.mainLogger.With("ballot", p.ballot, "msg", msg)
-	//p.logger.Debug("step")
+	p.logger = p.mainLogger.With(
+		"ballot", p.ballot,
+		"instance", p.instanceID,
+		"from", msg.From,
+	)
+	defer func() {
+		p.logger = p.mainLogger
+	}()
+	p.logger.Debug("step")
 	if msg.To != p.replicaID {
 		p.logger.Error("delivered to wrong node.")
 		return
 	}
+
 	if !p.replicas.exist(msg.From) {
 		return
 	}
@@ -233,6 +250,9 @@ func (p *Paxos) Step(msg *types.Message) {
 	}
 
 	if msg.InstanceID != p.instanceID {
+		p.logger.With(
+			"msg instance", msg.InstanceID,
+		).Debug("instance conflict")
 		return
 	}
 
@@ -353,6 +373,7 @@ func (p *Paxos) stepAccept(msg *types.Message) {
 		if learned != nil {
 			value = learned.Value
 		} else if p.proposed.empty() {
+			p.logger.Debug("queue is empty waiting for a value to be proposed")
 			p.pendingAccept = msg
 			return
 		} else {
@@ -366,8 +387,8 @@ func (p *Paxos) stepAccept(msg *types.Message) {
 	}
 	p.logger.With("value", value).Debug("accepted")
 	p.log.add(learned)
-	p.sendOne(types.NewAcceptedMessage(accept.Ballot, accept.Sequence, value), msg.From)
 	p.pendingAccept = nil
+	p.sendOne(types.NewAcceptedMessage(accept.Ballot, accept.Sequence, value), msg.From)
 	return
 }
 
@@ -388,6 +409,11 @@ func (p *Paxos) stepAccepted(msg *types.Message) {
 		p.logger.Debug("skipping accepted.")
 		return
 	}
+	p.logger.With(
+		"from", msg.From,
+		"sequence", accepted.Sequence,
+		"value ID", hex.EncodeToString(accepted.Value.Id),
+	).Debug("aggregating accepted message")
 	agg.add(msg.From, accepted.Ballot, accepted.Value)
 	if agg.complete() {
 		value, final := agg.safe()
@@ -409,8 +435,8 @@ func (p *Paxos) stepAccepted(msg *types.Message) {
 				p.logger.Debug("waiting for ANY accepted messages.")
 				msg := types.NewAcceptMessage(bal, seq, anyValue)
 				p.hbmsg = msg
-				p.send(msg)
 				p.acceptedAggregates[seq] = newAggregate(p.fastQuorum)
+				p.send(msg)
 			}
 			return
 		}

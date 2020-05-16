@@ -138,7 +138,13 @@ func (m *Manager) Update(cluster *types.Configuration) {
 }
 
 func (m *Manager) Join(ctx context.Context) (err error) {
+	sent := map[uint64]struct{}{}
 	m.kg.IterateObservers(m.conf.Node.ID, func(n *types.Node) bool {
+		// supress notification on duplicate edges
+		if _, exist := sent[n.ID]; exist {
+			return true
+		}
+		sent[n.ID] = struct{}{}
 		err = m.network.Join(ctx, m.configID, n, m.conf.Node)
 		if err != nil {
 			return false

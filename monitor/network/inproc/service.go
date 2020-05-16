@@ -35,7 +35,7 @@ type Service struct {
 	graph chan *monitor.KGraph
 }
 
-func (s *Service) Update(ctx context.Context, kg *monitor.KGraph) {
+func (s *Service) Update(kg *monitor.KGraph) {
 	s.graph <- kg
 }
 

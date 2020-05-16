@@ -3,8 +3,8 @@ package rapid
 import (
 	"context"
 	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
-	"fmt"
 	"math/rand"
 	"time"
 
@@ -66,8 +66,7 @@ type Config struct {
 	LowWatermark  int
 	HighWatermark int
 
-	Seed  bool
-	Seeds []*types.Node
+	Seed *types.Node
 
 	IP   string
 	Port uint64
@@ -108,27 +107,7 @@ type Rapid struct {
 	conf    Config
 	fd      monitor.FailureDetector
 	network Network
-	seed    bool
 	rng     *rand.Rand
-}
-
-func (r Rapid) getNode() *types.Node {
-	if !r.conf.Seed {
-		return &types.Node{
-			IP:   r.conf.IP,
-			Port: r.conf.Port,
-			ID:   r.rng.Uint64(),
-		}
-	}
-	var node *types.Node
-	for _, n := range r.conf.Seeds {
-		if n.IP == r.conf.IP && n.Port == r.conf.Port {
-			node = n
-			break
-		}
-	}
-	return node
-
 }
 
 func (r Rapid) Run(ctx context.Context, updates chan<- *types.Configuration) error {
@@ -136,41 +115,39 @@ func (r Rapid) Run(ctx context.Context, updates chan<- *types.Configuration) err
 	defer cancel()
 	group, ctx := errgroup.WithContext(ctx)
 
-	node := r.getNode()
-	if node == nil {
-		return fmt.Errorf("failed to initialize a node with config %v", r.conf)
+	node := &types.Node{
+		IP:   r.conf.IP,
+		Port: r.conf.Port,
+		ID:   r.rng.Uint64(),
 	}
 
-	r.logger.With("node", node).Info("joining cluster")
-
-	configuration, err := r.bootstrapClient().Join(ctx, node.ID)
-	if err != nil {
-		r.logger.With("error", err).Error("step 1 join failed")
-		return err
+	seed := Compare(node, r.conf.Seed)
+	if seed {
+		r.logger.With("node", node).Info("bootstrapping a cluster")
+	} else {
+		r.logger.With("node", node).Info("joining cluster")
 	}
-	requiresJoin := true
-	for _, other := range configuration.Nodes {
-		if Compare(node, other) {
-			requiresJoin = false
-			break
+	var (
+		configuration *types.Configuration
+		err           error
+		bootClient    = r.bootstrapClient()
+	)
+
+	if !seed {
+		configuration, err = bootClient.Join(ctx)
+		if err != nil {
+			r.logger.With("error", err).Error("requesting configuration from seed failed")
+			return err
+		}
+	} else {
+		configuration = &types.Configuration{
+			Nodes: []*types.Node{node},
 		}
 	}
+
 	r.logger.With(
 		"configuration", configuration,
-		"requires join", requiresJoin,
 	).Debug("received configuration from seed nodes")
-
-	cons := consensus.NewManager(
-		r.logger,
-		r.network.ConsensusNetworkService(configuration),
-		consensus.Config{
-			Node:             node,
-			Configuration:    configuration,
-			Timeout:          r.conf.ElectionTimeout,
-			HeartbeatTimeout: r.conf.HeartbeatTimeout,
-		},
-		time.Duration(r.conf.NetworkDelay)+time.Duration(r.rng.Int63n(int64(r.conf.NetworkDelay)/2)),
-	)
 
 	mon := monitor.NewManager(
 		r.logger,
@@ -188,25 +165,14 @@ func (r Rapid) Run(ctx context.Context, updates chan<- *types.Configuration) err
 		r.network.MonitorNetworkService(configuration, node),
 	)
 
-	values := make(chan []*ctypes.LearnedValue, 1)
-	cons.Subscribe(ctx, values)
-
-	group.Go(func() error {
-		return r.network.Listen(ctx, node)
-	})
-
-	group.Go(func() error {
-		return cons.Run(ctx)
-	})
-
-	if requiresJoin {
+	if !seed {
 		r.logger.With("node", node).Debug("joining cluster")
 		if err := mon.Join(ctx); err != nil {
 			r.logger.With("error", err).Error("step 2 join failed")
 			return err
 		}
 
-		configuration, err = r.waitJoined(ctx, node.ID, values)
+		configuration, err = r.waitJoined(ctx, bootClient, node)
 		if err != nil {
 			return err
 		}
@@ -216,8 +182,33 @@ func (r Rapid) Run(ctx context.Context, updates chan<- *types.Configuration) err
 	mon.Update(configuration)
 
 	group.Go(func() error {
+		return r.network.Listen(ctx, node)
+	})
+
+	group.Go(func() error {
 		return mon.Run(ctx)
 	})
+
+	cons := consensus.NewManager(
+		r.logger,
+		r.network.ConsensusNetworkService(configuration),
+		consensus.Config{
+			Node:             node,
+			Configuration:    configuration,
+			Timeout:          r.conf.ElectionTimeout,
+			HeartbeatTimeout: r.conf.HeartbeatTimeout,
+		},
+		time.Duration(r.conf.NetworkDelay)+time.Duration(r.rng.Int63n(int64(r.conf.NetworkDelay)/2)),
+	)
+
+	group.Go(func() error {
+		return cons.Run(ctx)
+	})
+
+	boot := bootstrap.NewService(r.logger, configuration, r.network.BootstrapServer())
+
+	values := make(chan []*ctypes.LearnedValue, 1)
+	cons.Subscribe(ctx, values)
 
 	group.Go(func() error {
 		mapping := map[uint64]*types.Node{}
@@ -233,6 +224,7 @@ func (r Rapid) Run(ctx context.Context, updates chan<- *types.Configuration) err
 						ID:    v.Sequence,
 					}
 					mon.Update(update)
+					boot.Update(update)
 					select {
 					case updates <- update:
 					case <-ctx.Done():
@@ -266,7 +258,7 @@ func (r Rapid) Run(ctx context.Context, updates chan<- *types.Configuration) err
 				sum := sha256.Sum256(bytes)
 
 				r.logger.With(
-					"id", sum,
+					"id", hex.EncodeToString(sum[:]),
 					"changes", changes,
 				).Info("proposing changeset")
 
@@ -287,21 +279,21 @@ func (r Rapid) Run(ctx context.Context, updates chan<- *types.Configuration) err
 	return group.Wait()
 }
 
-func (r Rapid) waitJoined(ctx context.Context, id uint64, values <-chan []*ctypes.LearnedValue) (*types.Configuration, error) {
+func (r Rapid) waitJoined(ctx context.Context, bclient bootstrap.Client, node *types.Node) (*types.Configuration, error) {
 	ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
 	defer cancel()
+	ticker := time.NewTicker(2 * time.Second)
+	defer ticker.Stop()
 	for {
 		select {
 		case <-ctx.Done():
 			return nil, ctx.Err()
-		case vals := <-values:
-			for _, v := range vals {
-				for _, change := range v.Value.Changes.List {
-					if change.Type == types.Change_JOIN && change.Node.ID == id {
-						return &types.Configuration{
-							Nodes: v.Value.Nodes,
-							ID:    v.Sequence,
-						}, nil
+		case <-ticker.C:
+			configuration, err := bclient.Join(ctx)
+			if err == nil {
+				for _, other := range configuration.Nodes {
+					if Compare(node, other) {
+						return configuration, nil
 					}
 				}
 			}
@@ -312,11 +304,11 @@ func (r Rapid) waitJoined(ctx context.Context, id uint64, values <-chan []*ctype
 func (r Rapid) bootstrapClient() bootstrap.Client {
 	return bootstrap.NewClient(
 		r.logger,
-		r.conf.Seeds,
+		r.conf.Seed,
 		r.network.BootstrapClient(),
 	)
 }
 
 func Compare(a, b *types.Node) bool {
-	return a.ID == b.ID && a.IP == b.IP && a.Port == b.Port
+	return a.IP == b.IP && a.Port == b.Port
 }

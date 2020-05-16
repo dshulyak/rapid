@@ -16,14 +16,15 @@ import (
 	"github.com/dshulyak/rapid/types"
 	"github.com/spf13/pflag"
 	"go.uber.org/zap"
+	"go.uber.org/zap/zapcore"
 	"golang.org/x/sync/errgroup"
 )
 
 var (
-	config = pflag.StringP("configuration", "c", "example/rapid.json", "JSON file with configuration.")
-	seed   = pflag.BoolP("seed", "s", false, "True if instance is a seed")
-	ip     = pflag.String("ip", "0.0.0.0", "")
-	port   = pflag.Uint64("port", 4001, "")
+	config    = pflag.StringP("configuration", "c", "example/rapid.json", "JSON file with configuration.")
+	ip        = pflag.String("ip", "0.0.0.0", "")
+	port      = pflag.Uint64("port", 4001, "")
+	verbosity = pflag.Int8P("verbosity", "v", -1, "logger verbosity")
 )
 
 func must(err error) {
@@ -37,7 +38,15 @@ func main() {
 
 	rand.Seed(time.Now().Unix())
 
-	logger, err := zap.NewDevelopment()
+	lconf := zap.Config{
+		Level:            zap.NewAtomicLevelAt(zapcore.Level(*verbosity)),
+		Development:      true,
+		Encoding:         "console",
+		EncoderConfig:    zap.NewDevelopmentEncoderConfig(),
+		OutputPaths:      []string{"stderr"},
+		ErrorOutputPaths: []string{"stderr"},
+	}
+	logger, err := lconf.Build()
 	must(err)
 	ctx, cancel := context.WithCancel(context.Background())
 
@@ -49,7 +58,6 @@ func main() {
 
 	conf.IP = *ip
 	conf.Port = *port
-	conf.Seed = *seed
 
 	fd := prober.New(logger.Sugar(), 2*time.Second, 2*time.Second, 3)
 
@@ -77,7 +85,7 @@ func main() {
 		return nil
 	})
 	for update := range updates {
-		logger.Sugar().With("configuration", update).Info("received update")
+		logger.Sugar().With("configuration", update).Info("UPDATE")
 	}
 	must(group.Wait())
 }
