@@ -230,6 +230,7 @@ func (a *Alerts) Observe(alert *mtypes.Alert) {
 		})
 		// cut is detected only if there are no other unstable alerts
 		if count >= a.lw && count < a.hw {
+			a.logger.With("subject ID", other.id).Debug("can't detect a cut with unstable subject")
 			return
 		}
 		if count >= a.hw && !other.detected {
