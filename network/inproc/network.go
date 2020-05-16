@@ -22,19 +22,24 @@ type Response struct {
 	Err    error
 }
 
-func newPipe(ctx context.Context, from, to uint64) *pipe {
+func newPipe(ctx context.Context, from, to uint64, applied []Policy) *pipe {
 	return &pipe{
 		ctx:  ctx,
 		from: from,
 		to:   to,
 		// TODO reconsider using two buffers when framework will be extended with error conditions
 		messages: make(chan Request, 10),
+		// intentionally not buffered, to guarantee that next message will always will be received after policy was applied
+		policies: make(chan Policy),
+		applied:  applied,
 	}
 }
 
 type pipe struct {
 	ctx      context.Context
 	from, to uint64
+	policies chan Policy
+	applied  []Policy
 	messages chan Request
 }
 
@@ -53,7 +58,27 @@ func (p *pipe) run(handlers map[uint64]Handler) {
 		select {
 		case <-p.ctx.Done():
 			return
+		case policy := <-p.policies:
+			switch policy.(type) {
+			case Cancel:
+				p.applied = nil
+			default:
+				p.applied = append(p.applied, policy)
+			}
 		case msg := <-p.messages:
+			drop := false
+			for _, policy := range p.applied {
+				switch typed := policy.(type) {
+				case DropPolicy:
+					if typed.Drop(p.from, p.to, msg.Object) {
+						drop = true
+						break
+					}
+				}
+			}
+			if drop {
+				continue
+			}
 			handler, exist := handlers[msg.Code]
 			if exist {
 				resp := handler(msg, msg.Object)
@@ -86,6 +111,7 @@ type Network struct {
 	wg        sync.WaitGroup // wg.Add is not concurrency safe
 	pipes     map[uint64]map[uint64]*pipe
 	consumers map[uint64]map[uint64]Handler
+	applied   []Policy
 }
 
 func (n *Network) Register(id uint64, code uint64, f Handler) {
@@ -116,6 +142,29 @@ func (n *Network) Send(req Request) error {
 		return err
 	}
 	return nil
+}
+
+func (n *Network) Apply(policy Policy) {
+	n.mu.Lock()
+	defer n.mu.Unlock()
+	switch policy.(type) {
+	case Cancel:
+		n.applied = nil
+	default:
+		n.applied = append(n.applied, policy)
+	}
+	var wg sync.WaitGroup
+	for _, to := range n.pipes {
+		for _, pipe := range to {
+			pipe := pipe
+			wg.Add(1)
+			go func() {
+				pipe.policies <- policy
+				wg.Done()
+			}()
+		}
+	}
+	wg.Wait()
 }
 
 func (n *Network) connect(from, to uint64) (*pipe, error) {
@@ -165,7 +214,7 @@ func (n *Network) enabled(from, to uint64) bool {
 	}
 	_, exist = n.pipes[from][to]
 	if !exist {
-		n.pipes[from][to] = newPipe(n.ctx, from, to)
+		n.pipes[from][to] = newPipe(n.ctx, from, to, n.applied)
 	}
 	return exist
 }

@@ -68,6 +68,10 @@ type Cluster struct {
 	managers map[uint64]*consensus.Manager
 }
 
+func (c *Cluster) Network() *network.Network {
+	return c.network
+}
+
 func (c *Cluster) Start() {
 	for i := range c.managers {
 		m := c.managers[i]

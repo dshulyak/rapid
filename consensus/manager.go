@@ -29,7 +29,6 @@ type NetworkService interface {
 func NewManager(logger *zap.SugaredLogger, swarm NetworkService, conf Config, tick time.Duration) *Manager {
 	cons := NewConsensus(logger, NewPaxos(logger, conf), tick)
 	swarm.Register(func(ctx context.Context, msg *types.Message) error {
-		// if context is nil and queue is full message will be dropped
 		if err := cons.Receive(ctx, []*types.Message{msg}); err != nil {
 			cons.logger.With("error", err).Warn("consensus failed to accept messages.")
 		}

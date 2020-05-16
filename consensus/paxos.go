@@ -158,10 +158,10 @@ func (p *Paxos) Propose(value *types.Value) {
 func (p *Paxos) slowBallot(bal uint64) {
 	seq := p.log.commited() + 1
 	p.promiseAggregates[seq] = newAggregate(p.fastQuorum)
-	p.logger.Debug("started election ballot.",
-		" ballot=", bal,
-		" sequence=", seq,
-	)
+	p.logger.With(
+		"ballot", bal,
+		"sequence", seq,
+	).Debug("started election ballot.")
 	p.send(types.NewPrepareMessage(bal, seq))
 }
 
