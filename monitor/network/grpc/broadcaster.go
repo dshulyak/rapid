@@ -13,15 +13,14 @@ import (
 	"google.golang.org/grpc"
 )
 
-func (b Service) Update(kg *monitor.KGraph) {
-	b.graph <- kg
-}
-
-func (b Service) Broadcast(ctx context.Context, source <-chan []*mtypes.Alert) error {
+func (b Service) Broadcast(ctx context.Context, last *monitor.LastKG, source <-chan []*mtypes.Alert) error {
 	var (
-		wg   sync.WaitGroup
-		topo = map[uint64]chan []*mtypes.Alert{}
+		wg     sync.WaitGroup
+		topo   = map[uint64]chan []*mtypes.Alert{}
+		update = last.Event()
+		kg     = last.Graph()
 	)
+	b.change(ctx, &wg, topo, kg)
 	for {
 		select {
 		case <-ctx.Done():
@@ -39,46 +38,51 @@ func (b Service) Broadcast(ctx context.Context, source <-chan []*mtypes.Alert) e
 					break
 				}
 			}
-		case kg := <-b.graph:
-			for id := range topo {
-				old := true
-				kg.IterateObservers(b.id, func(n *types.Node) bool {
-					if n.ID == id {
-						old = false
-						return false
-					}
-					return true
-				})
-				if old {
-					close(topo[id])
-					delete(topo, id)
-				}
-			}
-			// close previous connection after an update
-			kg.IterateObservers(b.id, func(n *types.Node) bool {
-				n = n
-				if _, exist := topo[n.ID]; exist {
-					return true
-				}
-				b.logger.With(
-					"node", n,
-				).Debug("created broadcaster")
-				alertch := make(chan []*mtypes.Alert, 1)
-
-				topo[n.ID] = alertch
-				wg.Add(1)
-
-				go func() {
-					defer wg.Done()
-					b.sendLoop(ctx, n, alertch)
-					b.logger.With(
-						"node", n,
-					).Debug("exit broadcaster")
-				}()
-				return true
-			})
+		case <-update:
+			update = last.Event()
+			b.change(ctx, &wg, topo, last.Graph())
 		}
 	}
+}
+
+func (b Service) change(ctx context.Context, wg *sync.WaitGroup, topo map[uint64]chan []*mtypes.Alert, kg *monitor.KGraph) {
+	for id := range topo {
+		old := true
+		kg.IterateObservers(b.id, func(n *types.Node) bool {
+			if n.ID == id {
+				old = false
+				return false
+			}
+			return true
+		})
+		if old {
+			close(topo[id])
+			delete(topo, id)
+		}
+	}
+	// close previous connection after an update
+	kg.IterateObservers(b.id, func(n *types.Node) bool {
+		n = n
+		if _, exist := topo[n.ID]; exist {
+			return true
+		}
+		b.logger.With(
+			"node", n,
+		).Debug("created broadcaster")
+		alertch := make(chan []*mtypes.Alert, 1)
+
+		topo[n.ID] = alertch
+		wg.Add(1)
+
+		go func() {
+			defer wg.Done()
+			b.sendLoop(ctx, n, alertch)
+			b.logger.With(
+				"node", n,
+			).Debug("exit broadcaster")
+		}()
+		return true
+	})
 }
 
 func (b Service) sendLoop(ctx context.Context, n *types.Node, source <-chan []*mtypes.Alert) {

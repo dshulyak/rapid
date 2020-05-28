@@ -9,15 +9,15 @@ import (
 	"go.uber.org/zap"
 )
 
-func NewAlertsReactor(logger *zap.SugaredLogger, period time.Duration, alerts *Alerts) AlertsReactor {
+func NewAlertsReactor(logger *zap.SugaredLogger, period time.Duration, last *LastKG, alerts *Alerts) AlertsReactor {
 	return AlertsReactor{
 		logger:   logger.Named("alerts reactor"),
 		period:   period,
+		last:     last,
 		alerts:   alerts,
 		incoming: make(chan *mtypes.Alert, 1),
 		changes:  make(chan []*types.Change, 1),
 		outgoing: make(chan []*mtypes.Alert, 1),
-		graph:    make(chan *KGraph, 1),
 	}
 }
 
@@ -25,18 +25,13 @@ type AlertsReactor struct {
 	logger *zap.SugaredLogger
 	period time.Duration
 
+	last   *LastKG
 	alerts *Alerts
 
 	incoming chan *mtypes.Alert
 
 	changes  chan []*types.Change
 	outgoing chan []*mtypes.Alert
-
-	graph chan *KGraph
-}
-
-func (r AlertsReactor) Update(kg *KGraph) {
-	r.graph <- kg
 }
 
 func (r AlertsReactor) Observe(ctx context.Context, alert *mtypes.Alert) error {
@@ -64,6 +59,8 @@ func (r AlertsReactor) Run(ctx context.Context) error {
 
 		outchan chan []*mtypes.Alert
 		chchan  chan []*types.Change
+
+		update = r.last.Event()
 	)
 	defer ticker.Stop()
 	for {
@@ -83,8 +80,9 @@ func (r AlertsReactor) Run(ctx context.Context) error {
 		case outchan <- outgoing:
 			outchan = nil
 			outgoing = nil
-		case kg := <-r.graph:
-			r.alerts.Update(kg)
+		case <-update:
+			update = r.last.Event()
+			r.alerts.Update(r.last.Graph())
 		}
 		if len(changes) > 0 {
 			chchan = r.changes

@@ -22,7 +22,6 @@ func New(logger *zap.SugaredLogger, id uint64, network *inproc.Network) *Service
 		id:      id,
 		logger:  logger,
 		network: network,
-		graph:   make(chan *monitor.KGraph, 1),
 	}
 }
 
@@ -31,25 +30,19 @@ type Service struct {
 
 	logger  *zap.SugaredLogger
 	network *inproc.Network
-
-	graph chan *monitor.KGraph
 }
 
-func (s *Service) Update(kg *monitor.KGraph) {
-	s.graph <- kg
-}
-
-func (s *Service) Broadcast(ctx context.Context, alertsch <-chan []*mtypes.Alert) error {
-	var kg *monitor.KGraph
+func (s *Service) Broadcast(ctx context.Context, last *monitor.LastKG, alertsch <-chan []*mtypes.Alert) error {
+	kg := last.Graph()
+	update := last.Event()
 	for {
 		select {
 		case <-ctx.Done():
 			return ctx.Err()
-		case kg = <-s.graph:
+		case <-update:
+			kg = last.Graph()
+			update = last.Event()
 		case alerts := <-alertsch:
-			if kg == nil {
-				continue
-			}
 			kg.IterateObservers(s.id, func(n *types.Node) bool {
 				_ = s.network.Send(inproc.Request{
 					Context: ctx,

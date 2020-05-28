@@ -60,17 +60,16 @@ func (net *NetworkHandler) UpdateConfigID(id uint64) {
 type NetworkService interface {
 	Register(*NetworkHandler)
 
-	// NOTE broadcasting topology depends on the kgraph
-	Update(*KGraph)
-	Broadcast(context.Context, <-chan []*mtypes.Alert) error
+	Broadcast(context.Context, *LastKG, <-chan []*mtypes.Alert) error
 
 	Join(ctx context.Context, configID uint64, observer, subject *types.Node) error
 }
 
 func NewManager(logger *zap.SugaredLogger, conf Config, cluster *types.Configuration, fd FailureDetector, netsvc NetworkService) *Manager {
 	kg := NewKGraph(conf.K, cluster.Nodes)
-	am := NewAlertsReactor(logger, conf.TimeoutPeriod, NewAlerts(logger, kg, conf))
-	mon := NewMonitor(logger, conf.Node.ID, fd, am)
+	last := NewLastKG(kg)
+	am := NewAlertsReactor(logger, conf.TimeoutPeriod, last, NewAlerts(logger, kg, conf))
+	mon := NewMonitor(logger, conf.Node.ID, last, fd, am)
 	handler := &NetworkHandler{
 		logger: logger.Named("monitor network"),
 		id:     conf.Node.ID,
@@ -85,7 +84,7 @@ func NewManager(logger *zap.SugaredLogger, conf Config, cluster *types.Configura
 		handler:  handler,
 		network:  netsvc,
 		configID: cluster.ID,
-		kg:       kg,
+		last:     last,
 	}
 }
 
@@ -93,7 +92,7 @@ type Manager struct {
 	logger *zap.SugaredLogger
 	conf   Config
 
-	kg       *KGraph
+	last     *LastKG
 	configID uint64
 
 	mon *Monitor
@@ -112,7 +111,7 @@ func (m *Manager) Run(ctx context.Context) error {
 	})
 	group.Go(func() error {
 		defer m.logger.Info("closed broadcaster")
-		return m.network.Broadcast(ctx, m.alerts.Alerts())
+		return m.network.Broadcast(ctx, m.last, m.alerts.Alerts())
 	})
 	group.Go(func() error {
 		defer m.logger.Info("closed monitoring extension")
@@ -128,18 +127,15 @@ func (m *Manager) Changes() <-chan []*types.Change {
 func (m *Manager) Update(cluster *types.Configuration) {
 	m.logger.With("ID", cluster.ID).Debug("updating monitoring")
 	kg := NewKGraph(m.conf.K, cluster.Nodes)
-	m.alerts.Update(kg)
-	m.mon.Update(kg)
-	m.network.Update(kg)
+	m.last.Update(kg)
 	m.handler.UpdateConfigID(cluster.ID)
-	m.kg = kg
 	m.configID = cluster.ID
 	m.logger.With("ID", cluster.ID).Debug("finished update")
 }
 
 func (m *Manager) Join(ctx context.Context) (err error) {
 	sent := map[uint64]struct{}{}
-	m.kg.IterateObservers(m.conf.Node.ID, func(n *types.Node) bool {
+	m.last.Graph().IterateObservers(m.conf.Node.ID, func(n *types.Node) bool {
 		// supress notification on duplicate edges
 		if _, exist := sent[n.ID]; exist {
 			return true
