@@ -1,162 +1,155 @@
------------------------------ MODULE Consensus -----------------------------
+--------------------------- MODULE RapidFastPaxos ---------------------------
 
-EXTENDS Integers, FiniteSets
+EXTENDS Integers, FiniteSets, TLC
 
-\* set of server ids
-CONSTANTS Servers
+CONSTANT Servers
 
-\* set of values that can be proposed
-CONSTANTS Values
+CONSTANT Values
 
-CONSTANTS Coordinator, Candidate, Replica
+Ballot == Nat
 
-Rounds == Nat
+None == CHOOSE v : v \notin Values
 
-----
+Classic == {i \in SUBSET(Servers) : Cardinality(i) * 2 > Cardinality(Servers)}
+Fast    == {i \in SUBSET(Servers) : Cardinality(i) * 4 >= Cardinality(Servers) * 3}
 
-\* current round for each server
-VARIABLE round
+GetQuorum(b) == IF b = 0 THEN Fast ELSE Classic
 
-\* vote for each server
-VARIABLE vote
-
-\* round of the vote for each server
-VARIABLE voteRound
-
-\* all transmitted messages
-VARIABLE messages
-
-\* state of the each server (Coordinator/Candidate/Replica)
-VARIABLE state
-
-\* set of fast rounds
-VARIABLE fastRounds
+PrepareT == "prepare"
+PromiseT == "promise"
+AcceptT == "accept"
+AcceptedT == "accepted"
 
 ----
 
-vars == <<round, vote, voteRound, messages, state, fastRounds>>
+VARIABLES messages,   \* message history
+          ballot,     \* current servers ballot
+          proposed,   \* not None if some value was proposed by server
+          learned,    \* not None if value was accepted by quorum of messages
+          voted,      \* last value that server voted for
+          votedBallot \* ballot of the round when server voted
 
-----
+vars == <<messages, ballot, proposed, learned, voted, votedBallot>>
 
-ANY == CHOOSE v : v \notin Values
-NONE == CHOOSE v : v \notin Values \cup {ANY}
+Send(m) == messages' = messages \cup {m}
 
-Max(S) == CHOOSE i \in S : \A j \in S : j \leq i
+Select(type, b) == {m \in messages: m.type = type /\ m.ballot = b}
 
-Classic == {s \in SUBSET Servers: Cardinality(s) * 2 > Cardinality(Servers)}
-Fast == {s \in SUBSET Servers: Cardinality(s)  * 4 >= Cardinality(Servers) * 3 }
-
-Quorums(r) == IF r \in fastRounds THEN Classic ELSE Fast
-
-Send(msg) == messages' = messages \cup {msg}
-
-AddToFast(r) == fastRounds' = fastRounds \cup {r}
-
-Select(t, r) == {m \in messages: m.type = t /\ m.round = r}
-
-----
+SelectQ(Q, type, b) == {m \in Select(type, b): m.server \in Q}
 
 Init == /\ messages = {}
-        /\ round = [s \in Servers |-> 0]
-        /\ vote = [s \in Servers |-> NONE]
-        /\ voteRound = [s \in Servers |-> 0]
-        /\ state = [s \in Servers |-> Replica]
-        /\ fastRounds = {}
+        /\ ballot = [s \in Servers |-> 0]
+        /\ proposed = [s \in Servers |-> None]
+        /\ learned = [s \in Servers |-> None]
+        /\ voted = [s \in Servers |-> None]
+        /\ votedBallot = [s \in Servers |-> 0]
 
 ----
 
-Phase1A(s, r) == /\ Select("propose", r) = {}
-                 /\ Send([type |-> "propose", round |-> r, replica |-> s])
-                 /\ state' = [state EXCEPT ![s] = Candidate]
-                 /\ UNCHANGED <<round, vote, voteRound, fastRounds>>
+Propose(s) == \E v \in Values:
+                 /\ ballot[s] = 0
+                 /\ proposed[s] = None
+                 /\ proposed' = [proposed EXCEPT ![s] = v]
+                 /\ voted' = [voted EXCEPT ![s] = v]
+                 /\ votedBallot' = [votedBallot EXCEPT ![s] = ballot[s]]
+                 /\ Send([type   |-> AcceptedT,
+                          value  |-> v,
+                          server |-> s,
+                          ballot |-> ballot[s]
+                         ])
+                 /\ UNCHANGED <<ballot, learned>>
 
-Phase1B(s) == \E m \in messages:
-                 /\ m.type = "propose"
-                 /\ m.round > round[s]
-                 /\ round' = [round EXCEPT ![s] = m.round]
-                 /\ Send([type |-> "promise", round |-> m.round, vote |-> vote[s], voteRound |-> voteRound[s], replica |-> s])
-                 /\ UNCHANGED <<vote, voteRound, state, fastRounds>>
+Timeout(s, next) == /\ learned[s] = None
+                    /\ ~ proposed[s] = None
+                    /\ next > ballot[s]
+                    /\ ballot' = [ballot EXCEPT ![s] = next]
+                    /\ Select(PrepareT, next) = {}
+                    /\ Send([type |-> PrepareT, server |-> s, ballot |-> next])
+                    /\ UNCHANGED <<proposed, learned, voted, votedBallot>>
 
+Learn(s) == /\ learned[s] = None
+            /\ \E v \in Values:
+                 \E Q \in GetQuorum(ballot[s]):
+                   /\ \A q \in Q: \E m \in messages:
+                        /\ m.type = AcceptedT
+                        /\ m.ballot = ballot[s]
+                        /\ m.server = q
+                        /\ m.value = v
+                   /\ learned' = [learned EXCEPT ![s] = v]
+                   /\ UNCHANGED <<messages, proposed, ballot, voted, votedBallot>>
 
-ValueForAccept(S, v) ==
-    LET k == Max({m.voted: m \in S})
-        maxmsgs == {m \in S: m.ballot = k}
-        V == {m.value: m \in maxmsgs}
-    IN IF \/ Cardinality(V) = 1 /\ NONE \notin V
-          \/ Cardinality({m \in maxmsgs: m.value = v})*2 > Cardinality(maxmsgs)
-       THEN v \in V
-       ELSE v = ANY
+Promise(s) == \E m \in messages:
+                /\ m.type = PrepareT
+                /\ m.ballot > ballot[s]
+                /\ ballot' = [ballot EXCEPT ![s] = m.ballot]
+                /\ Send([type        |-> PromiseT,
+                         server      |-> s,
+                         ballot      |-> m.ballot,
+                         voted       |-> voted[s],
+                         votedBallot |-> votedBallot[s]
+                         ])
+                /\ UNCHANGED <<proposed, learned, voted, votedBallot>>
 
+SafeValue(S, v) ==
+    LET highest == (CHOOSE m \in S : \A lower \in S:
+                    m.votedBallot >= lower.votedBallot).votedBallot
+        msgs == { m \in S: m.votedBallot = highest /\ ~ m.voted = None }
+        V == {m.voted : m \in msgs}
+    IN /\ v \in V
+       /\ \/ Cardinality(V) = 1
+          \/ \E Q \in Fast: Cardinality({m \in msgs: m.voted = v}) * 2 > Cardinality(Q)
 
-RenounceLeadership(s) == /\ state[s] = Coordinator
-                         /\ \E m \in messages:
-                             /\ m.round > round[s]
-                             /\ round' = [round EXCEPT ![s] = m.round]
-                         /\ UNCHANGED <<vote, voteRound, state, fastRounds, messages>>
+SafeValues(S) == {v \in Values: SafeValue(S, v)}
 
-Phase2A(s, r) == /\ state[s] = Candidate
-                 /\ Select("accept", r) = {}
-                 /\ LET S == Select("propose", r)
-                    IN /\ \E Q \in Classic: Cardinality(S) \geq Cardinality(Q)
-                       /\ \/ \E v \in Values:
-                               /\ ValueForAccept(S, v)
-                               /\ Send([type |-> "accept", round |-> r, value |-> v, replica |-> s])
-                          \/ /\ ValueForAccept(S, ANY)
-                             /\ AddToFast(r)
-                             /\ Send([type |-> "accept", round |-> r, value |-> ANY, replica |-> s])
-                 /\ state' = [state EXCEPT ![s] = Coordinator]
-                 /\ UNCHANGED <<vote, voteRound>>
+Accept(s) == /\ learned[s] = None
+             /\ ballot[s] \in Ballot
+             /\ Select(AcceptT, ballot[s]) = {}
+             /\ \E Q \in Classic:
+                  \E S \in SUBSET SelectQ(Q, PromiseT, ballot[s]):
+                    /\ \A q \in Q: \E m \in S: m.server = q
+                    /\ LET safe == SafeValues(S)
+                           choice == IF safe = {}
+                                     THEN proposed[s]
+                                     ELSE CHOOSE v \in Values: v \in safe
+                       IN Send([type   |-> AcceptT,
+                                value  |-> choice,
+                                server |-> s,
+                                ballot |-> ballot[s]])
+                    /\ UNCHANGED <<proposed, learned, ballot, voted, votedBallot>>
 
-Phase2B(s) == \E m \in messages:
-                 /\ m.type = "accept"
-                 /\ m.round \geq round[s]
-                 /\ \E v \in Values:
-                    /\ \/ m.value = ANY
-                       \/ m.value = v
-                    /\ Send([type |-> "accepted", value |-> v, round |-> m.round, replica |-> s])
-                    /\ round' = [round EXCEPT ![s] = m.round]
-                    /\ vote' = [vote EXCEPT ![s] = v]
-                    /\ voteRound = [voteRound EXCEPT ![s] = m.round]
-                 /\ UNCHANGED <<state, fastRounds>>
+Accepted(s) == \E m \in messages:
+                  /\ m.type = AcceptT
+                  /\ m.ballot >= ballot[s]
+                  /\ voted' = [voted EXCEPT ![s] = m.value]
+                  /\ votedBallot' = [votedBallot EXCEPT ![s] = m.ballot]
+                  /\ ballot' = [ballot EXCEPT ![s] = m.ballot]
+                  /\ Send([type   |-> AcceptedT,
+                           value  |-> m.value,
+                           server |-> s,
+                           ballot |-> m.ballot])
+                  /\ UNCHANGED <<learned, proposed>>
 
-
-IsCommitted(S, r, v) == \E Q \in Quorums(r):
-                            \A repl \in Q:
-                               \E m \in S:
-                                  /\ m.value = v
-                                  /\ m.replica = r
-
-Phase3B(s, r) == /\ state[s] = Coordinator
-                 /\ LET S == Select("accepted", r)
-                    IN \E v \in Values:
-                        IF IsCommitted(S, r, v)
-                        THEN
-                          /\ Send([type |-> "learned", value |-> v, round |-> r])
-                       \* coordinated recovery
-                        ELSE
-                            \* send safe value or ANY value from Values set
-                             /\ \/ ValueForAccept(S, v)
-                                \/ ValueForAccept(S, ANY)
-                             /\ Send([type |-> "accept", value |-> v, round |-> r + 1])
-                 /\ UNCHANGED <<round, state, fastRounds, vote, voteRound>>
+----
 
 Next == \E s \in Servers:
-           \/ Phase1B(s)
-           \/ Phase2B(s)
-           \/ RenounceLeadership(s)
-           \/ \E r \in Rounds:
-              \/ Phase1A(s, r)
-              \/ Phase2A(s, r)
-              \/ Phase3B(s, r)
+           \/ Propose(s)
+           \/ Learn(s)
+           \/ Promise(s)
+           \/ Accept(s)
+           \/ Accepted(s)
+           \/ \E b \in Ballot:
+              \/ Timeout(s, b)
 
-Spec == Init /\ [][Next]_vars
+Spec == Init /\ [][Next]_vars /\ WF_vars(Next)
 
-Learned(v) == \E m \in messages:
-                /\ m.type = "learned"
-                /\ m.value = v
+----
 
-Consistency == \A v1, v2 \in Values: Learned(v1) /\ Learned(v2) => (v1 = v2)
+Consistency == \A s1, s2 \in Servers: \/ learned[s1] = learned[s2]
+                                      \/ learned[s1] = None
+                                      \/ learned[s2] = None
+
+Liveness == <>[](\A s1, s2 \in Servers: learned[s1] = learned[s2])
 =============================================================================
 \* Modification History
-\* Last modified Mon May 11 17:24:52 EEST 2020 by dd
-\* Created Mon May 11 13:09:43 EEST 2020 by dd
+\* Last modified Sun May 31 07:56:42 EEST 2020 by dd
+\* Created Fri May 29 09:06:26 EEST 2020 by dd
