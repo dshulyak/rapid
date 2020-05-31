@@ -60,7 +60,7 @@ func (r AlertsReactor) Run(ctx context.Context) error {
 		outchan chan []*mtypes.Alert
 		chchan  chan []*types.Change
 
-		update = r.last.Event()
+		graph, update = r.last.Last()
 	)
 	defer ticker.Stop()
 	for {
@@ -81,8 +81,8 @@ func (r AlertsReactor) Run(ctx context.Context) error {
 			outchan = nil
 			outgoing = nil
 		case <-update:
-			update = r.last.Event()
-			r.alerts.Update(r.last.Graph())
+			graph, update = r.last.Last()
+			r.alerts.Update(graph)
 		}
 		if len(changes) > 0 {
 			chchan = r.changes

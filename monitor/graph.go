@@ -145,27 +145,30 @@ func NewLastKG(kg *KGraph) *LastKG {
 	return last
 }
 
-// LastKG is a utility to broadcast updates, so that subscribers
-// can select on event.
-// By contract updater provides are guarantee if subscriber receive an event
-// he will read configuration newer then the current one.
+type notifiable struct {
+	kg    *KGraph
+	event chan struct{}
+}
+
+// LastKG is a utility to broadcast updates.
+// When channel notification is received
 type LastKG struct {
-	config, event atomic.Value
+	value atomic.Value
 }
 
 func (c *LastKG) Update(kg *KGraph) {
-	current := c.event.Load()
-	c.config.Store(kg)
+	current := c.value.Load()
+	c.value.Store(notifiable{kg, make(chan struct{})})
 	if current != nil {
-		close(current.(chan struct{}))
+		close(current.(notifiable).event)
 	}
-	c.event.Store(make(chan struct{}))
+}
+
+func (c *LastKG) Last() (*KGraph, <-chan struct{}) {
+	val := c.value.Load().(notifiable)
+	return val.kg, val.event
 }
 
 func (c *LastKG) Graph() *KGraph {
-	return c.config.Load().(*KGraph)
-}
-
-func (c *LastKG) Event() <-chan struct{} {
-	return c.event.Load().(chan struct{})
+	return c.value.Load().(notifiable).kg
 }

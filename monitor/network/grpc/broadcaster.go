@@ -15,12 +15,11 @@ import (
 
 func (b Service) Broadcast(ctx context.Context, last *monitor.LastKG, source <-chan []*mtypes.Alert) error {
 	var (
-		wg     sync.WaitGroup
-		topo   = map[uint64]chan []*mtypes.Alert{}
-		update = last.Event()
-		kg     = last.Graph()
+		wg            sync.WaitGroup
+		topo          = map[uint64]chan []*mtypes.Alert{}
+		graph, update = last.Last()
 	)
-	b.change(ctx, &wg, topo, kg)
+	b.change(ctx, &wg, topo, graph)
 	for {
 		select {
 		case <-ctx.Done():
@@ -39,8 +38,8 @@ func (b Service) Broadcast(ctx context.Context, last *monitor.LastKG, source <-c
 				}
 			}
 		case <-update:
-			update = last.Event()
-			b.change(ctx, &wg, topo, last.Graph())
+			graph, update = last.Last()
+			b.change(ctx, &wg, topo, graph)
 		}
 	}
 }

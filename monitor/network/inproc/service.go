@@ -33,17 +33,15 @@ type Service struct {
 }
 
 func (s *Service) Broadcast(ctx context.Context, last *monitor.LastKG, alertsch <-chan []*mtypes.Alert) error {
-	kg := last.Graph()
-	update := last.Event()
+	graph, update := last.Last()
 	for {
 		select {
 		case <-ctx.Done():
 			return ctx.Err()
 		case <-update:
-			kg = last.Graph()
-			update = last.Event()
+			graph, update = last.Last()
 		case alerts := <-alertsch:
-			kg.IterateObservers(s.id, func(n *types.Node) bool {
+			graph.IterateObservers(s.id, func(n *types.Node) bool {
 				_ = s.network.Send(inproc.Request{
 					Context: ctx,
 					From:    s.id,

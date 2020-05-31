@@ -40,18 +40,18 @@ func (m *Monitor) Run(ctx context.Context) error {
 	var (
 		group sync.WaitGroup
 		// fds is a map with cancellation functions
-		topology = map[uint64]func(){}
-		update   = m.last.Event()
+		topology      = map[uint64]func(){}
+		graph, update = m.last.Last()
 	)
-	m.change(ctx, &group, topology, m.last.Graph())
+	m.change(ctx, &group, topology, graph)
 	defer group.Wait()
 	for {
 		select {
 		case <-ctx.Done():
 			return ctx.Err()
 		case <-update:
-			update = m.last.Event()
-			m.change(ctx, &group, topology, m.last.Graph())
+			graph, update = m.last.Last()
+			m.change(ctx, &group, topology, graph)
 		}
 	}
 }
