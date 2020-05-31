@@ -104,7 +104,7 @@ func TestPaxosStartClassicRoundOnTimeout(t *testing.T) {
 }
 
 func TestPaxosFullRoundWithConflicts(t *testing.T) {
-	n := 8
+	n := 7
 	conf := nConfig(n)
 	pax := testPaxos(conf)
 
@@ -113,10 +113,10 @@ func TestPaxosFullRoundWithConflicts(t *testing.T) {
 
 	pax.Propose(one)
 	require.Len(t, pax.Messages(), n-1)
-	for _, node := range conf.Configuration.Nodes[1:5] {
+	for _, node := range conf.Configuration.Nodes[1:4] {
 		pax.Step(types.WithRouting(node.ID, conf.Node.ID, types.NewAcceptedMessage(0, 1, one)))
 	}
-	for _, node := range conf.Configuration.Nodes[5:n] {
+	for _, node := range conf.Configuration.Nodes[4:n] {
 		pax.Step(types.WithRouting(node.ID, conf.Node.ID, types.NewAcceptedMessage(0, 1, two)))
 	}
 	require.Empty(t, pax.Messages())

@@ -112,8 +112,8 @@ func TestManagerDowngrade(t *testing.T) {
 
 	for i := 0; i < 3; i++ {
 		add := &types.Node{ID: 777}
-		nodes := make([]*types.Node, 0, 4)
-		nodes = append(nodes, cluster.Nodes()...)
+		nodes := make([]*types.Node, 4)
+		copy(nodes, cluster.Nodes())
 		nodes = append(nodes, add)
 		upgrade := &ctypes.Value{
 			Id:    []byte("upgrade"),

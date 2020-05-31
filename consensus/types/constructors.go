@@ -59,13 +59,3 @@ func NewAcceptedMessage(ballot, seq uint64, value *Value) *Message {
 		},
 	}
 }
-
-func NewLearnedMessage(values ...*LearnedValue) *Message {
-	return &Message{
-		Type: &Message_Learned{
-			Learned: &Learned{
-				Values: values,
-			},
-		},
-	}
-}

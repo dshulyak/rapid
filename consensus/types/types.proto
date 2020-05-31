@@ -12,7 +12,6 @@ message Message {
     Promise promise = 2;
     Accept accept = 3;
     Accepted accepted = 4;
-    Learned learned = 5;
   }
 
   uint64 from = 6;
@@ -55,8 +54,4 @@ message LearnedValue {
   uint64 ballot = 1;
   uint64 sequence = 2;
   Value value = 3;
-}
-
-message Learned {
-  repeated LearnedValue values = 1;
 }

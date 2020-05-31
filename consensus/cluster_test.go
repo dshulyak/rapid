@@ -29,7 +29,7 @@ func NewCluster(n int, tick time.Duration, jitter int64) *Cluster {
 	rand.Read(instanceID)
 	for i := 1; i <= n; i++ {
 		conf := consensus.Config{
-			Timeout:       8,
+			Timeout:       4,
 			Node:          conf.Nodes[i-1],
 			Configuration: conf,
 		}

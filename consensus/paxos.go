@@ -2,7 +2,6 @@ package consensus
 
 import (
 	"encoding/hex"
-	"math"
 
 	"github.com/dshulyak/rapid/consensus/types"
 	"go.uber.org/zap"
@@ -18,7 +17,11 @@ type Config struct {
 }
 
 func getFastQuorum(lth int) int {
-	return int(math.Ceil(float64(lth) * 3 / 4))
+	return (lth * 2 / 3) + 1
+}
+
+func getSafety(lth int) int {
+	return (lth / 3) + 1
 }
 
 func getClassicQuorum(lth int) int {
@@ -27,8 +30,10 @@ func getClassicQuorum(lth int) int {
 
 func NewPaxos(logger *zap.SugaredLogger, conf Config) *Paxos {
 	logger = logger.Named("paxos").With("node", conf.Node.ID)
-	classic := getClassicQuorum(len(conf.Configuration.Nodes))
-	fast := getFastQuorum(len(conf.Configuration.Nodes))
+	n := len(conf.Configuration.Nodes)
+	classic := getClassicQuorum(n)
+	fast := getFastQuorum(n)
+	safety := getSafety(n)
 	return &Paxos{
 		conf:          conf,
 		replicaID:     conf.Node.ID,
@@ -38,8 +43,9 @@ func NewPaxos(logger *zap.SugaredLogger, conf Config) *Paxos {
 		replicas:      newReplicasInfo(conf.Configuration.Nodes),
 		classicQuorum: classic,
 		fastQuorum:    fast,
-		promised:      newAggregate(classic, fast/2),
-		accepted:      newAggregate(fast, fast/2),
+		safetyQuorum:  safety,
+		promised:      newAggregate(classic, safety),
+		accepted:      newAggregate(fast, safety),
 		log:           newValues(),
 	}
 }
@@ -55,8 +61,8 @@ type Paxos struct {
 	replicaID uint64
 
 	// instanceID and classic/fast quorums must be updated after each configuration commit.
-	instanceID                uint64
-	classicQuorum, fastQuorum int
+	instanceID                              uint64
+	classicQuorum, fastQuorum, safetyQuorum int
 
 	// logger is extended with context information
 	mainLogger, logger *zap.SugaredLogger
@@ -99,7 +105,7 @@ func (p *Paxos) Tick() {
 	if p.ticks == 0 {
 		p.renewTimeout()
 		// start classic round
-		p.promised = newAggregate(p.classicQuorum, p.fastQuorum/2)
+		p.promised = newAggregate(p.classicQuorum, p.safetyQuorum)
 		p.send(types.NewPrepareMessage(p.ballot+1, p.instanceID+1))
 	}
 }
@@ -109,10 +115,11 @@ func (p *Paxos) renewTimeout() {
 }
 
 func (p *Paxos) Propose(value *types.Value) {
-	if !p.proposed {
+	if p.proposed {
 		p.logger.With(
 			"ballot", p.ballot,
 		).Debug("already voted in this ballot")
+		return
 	}
 	p.ticks = p.conf.Timeout
 	p.proposed = true
@@ -143,13 +150,17 @@ func (p *Paxos) commit(values ...*types.LearnedValue) {
 		if v.Sequence > p.log.commited() {
 			p.values = append(p.values, v)
 			p.log.commit(v)
-			p.instanceID = v.Sequence
 			p.replicas.update(v.Value.Changes)
+
 			p.classicQuorum = getClassicQuorum(len(v.Value.Nodes))
 			p.fastQuorum = getFastQuorum(len(v.Value.Nodes))
-			p.accepted = newAggregate(p.fastQuorum, p.fastQuorum/2)
+			p.accepted = newAggregate(p.fastQuorum, p.safetyQuorum)
 			p.promised = nil
 			p.proposed = false
+			p.instanceID = v.Sequence
+			p.ballot = 0
+			p.ticks = -1
+
 			p.logger.With(
 				"sequence", v.Sequence,
 				"classic", p.classicQuorum,
@@ -180,11 +191,11 @@ func (p *Paxos) sendOne(msg *types.Message, to uint64) {
 	msg = types.WithInstance(p.instanceID, msg)
 	p.replicas.resetTicks(to)
 	if msg.To == p.replicaID {
-		p.logger.With("msg", msg).Debug("sending to self")
+		//p.logger.With("msg", msg).Debug("sending to self")
 		p.Step(msg)
 		return
 	}
-	p.logger.With("msg", msg).Debug("sending to network")
+	//p.logger.With("msg", msg).Debug("sending to network")
 	p.messages = append(p.messages, msg)
 }
 
@@ -197,7 +208,7 @@ func (p *Paxos) Step(msg *types.Message) {
 	defer func() {
 		p.logger = p.mainLogger
 	}()
-	p.logger.Debug("step")
+	//p.logger.Debug("step")
 	if msg.To != p.replicaID {
 		p.logger.Error("delivered to wrong node.")
 		return
@@ -246,7 +257,7 @@ func (p *Paxos) stepPrepare(msg *types.Message) {
 		value = learned.Value
 		voted = learned.Ballot
 	}
-	p.accepted = newAggregate(p.classicQuorum, p.fastQuorum/2)
+	p.accepted = newAggregate(p.classicQuorum, p.safetyQuorum)
 	p.sendOne(
 		types.NewPromiseMessage(
 			p.ballot,
@@ -270,12 +281,12 @@ func (p *Paxos) stepPromise(msg *types.Message) {
 
 	p.promised.add(msg.From, promise.Ballot, promise.Value)
 	if p.promised.complete() {
-		p.accepted = newAggregate(p.classicQuorum, p.fastQuorum/2)
+		p.accepted = newAggregate(p.classicQuorum, p.safetyQuorum)
 		value, _ := p.promised.safe()
 		if value == nil {
 			value = p.promised.any()
 		}
-		p.promised = newAggregate(p.classicQuorum, p.fastQuorum/2)
+		p.promised = newAggregate(p.classicQuorum, p.safetyQuorum)
 		p.send(types.NewAcceptMessage(p.ballot, promise.Sequence, value))
 	}
 }
