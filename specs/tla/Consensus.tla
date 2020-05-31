@@ -11,7 +11,7 @@ Ballot == Nat
 None == CHOOSE v : v \notin Values
 
 Classic == {i \in SUBSET(Servers) : Cardinality(i) * 2 > Cardinality(Servers)}
-Fast    == {i \in SUBSET(Servers) : Cardinality(i) * 4 >= Cardinality(Servers) * 3}
+Fast    == {i \in SUBSET(Servers) : Cardinality(i) * 3 > Cardinality(Servers) * 2}
 
 GetQuorum(b) == IF b = 0 THEN Fast ELSE Classic
 
@@ -97,7 +97,7 @@ SafeValue(S, v) ==
         V == {m.voted : m \in msgs}
     IN /\ v \in V
        /\ \/ Cardinality(V) = 1
-          \/ \E Q \in Fast: Cardinality({m \in msgs: m.voted = v}) * 2 > Cardinality(Q)
+          \/ \E Q \in Fast: Cardinality({m \in msgs: m.voted = v}) * 3 > Cardinality(Q)
 
 SafeValues(S) == {v \in Values: SafeValue(S, v)}
 
@@ -151,5 +151,5 @@ Consistency == \A s1, s2 \in Servers: \/ learned[s1] = learned[s2]
 Liveness == <>[](\A s1, s2 \in Servers: learned[s1] = learned[s2])
 =============================================================================
 \* Modification History
-\* Last modified Sun May 31 07:56:42 EEST 2020 by dd
+\* Last modified Sun May 31 19:41:12 EEST 2020 by dd
 \* Created Fri May 29 09:06:26 EEST 2020 by dd
