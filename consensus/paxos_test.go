@@ -30,8 +30,7 @@ func testLogger() *zap.SugaredLogger {
 
 func defaultConfig() consensus.Config {
 	return consensus.Config{
-		Timeout:          1,
-		HeartbeatTimeout: 1,
+		Timeout: 1,
 		Node: &atypes.Node{
 			ID: 1,
 		},
@@ -42,125 +41,114 @@ func defaultConfig() consensus.Config {
 		},
 	}
 }
+
+func nConfig(n int) consensus.Config {
+	nodes := []*atypes.Node{}
+	for i := 1; i <= n; i++ {
+		nodes = append(nodes, &atypes.Node{ID: uint64(i)})
+	}
+	return consensus.Config{
+		Timeout: 1,
+		Node: &atypes.Node{
+			ID: 1,
+		},
+		Configuration: &atypes.Configuration{
+			Nodes: nodes,
+		},
+	}
+}
+
 func testPaxos(conf consensus.Config) *consensus.Paxos {
 	return consensus.NewPaxos(testLogger(), conf)
 }
 
-func TestPaxosPrepareNewOnTimeout(t *testing.T) {
-	pax := testPaxos(defaultConfig())
-
-	pax.Tick()
-	messages := pax.Messages()
-	require.Len(t, messages, 3)
-
-	for i := range messages {
-		prepare := messages[i].GetPrepare()
-		require.NotNil(t, prepare)
-		require.Equal(t, 1, int(prepare.Ballot))
-		require.Equal(t, 1, int(prepare.Sequence))
-	}
-}
-
-func TestPaxosPromiseNilForValidPrepare(t *testing.T) {
+func TestPaxosCommitedInFastRound(t *testing.T) {
 	conf := defaultConfig()
 	pax := testPaxos(conf)
 
-	msg := types.WithRouting(2, conf.Node.ID, types.NewPrepareMessage(1, 1))
-
-	pax.Step(msg)
-	messages := pax.Messages()
-	require.Len(t, messages, 1)
-
-	promise := messages[0].GetPromise()
-	require.NotNil(t, promise)
-	require.Nil(t, promise.Value)
-	require.Empty(t, promise.CommitedSequence)
-	require.Empty(t, promise.VoteBallot)
-}
-
-func TestPaxosAcceptAnyNilPromisesAggregated(t *testing.T) {
-	conf := defaultConfig()
-	pax := testPaxos(conf)
-
-	// Timeout should start a new ballot, and initialize helpers to track received promises
-	pax.Tick()
-	messages := pax.Messages()
-	require.Len(t, messages, 3)
-
-	for i := range messages {
-		prepare := messages[i].GetPrepare()
-		require.NotNil(t, prepare)
-		require.Equal(t, 1, int(prepare.Ballot))
-		require.Equal(t, 1, int(prepare.Sequence))
+	value := &types.Value{Id: []byte("test")}
+	msgs := []*types.Message{
+		types.WithRouting(1, conf.Node.ID, types.NewAcceptedMessage(0, 1, value)),
+		types.WithRouting(2, conf.Node.ID, types.NewAcceptedMessage(0, 1, value)),
+		types.WithRouting(3, conf.Node.ID, types.NewAcceptedMessage(0, 1, value)),
 	}
-
-	for _, n := range conf.Configuration.Nodes {
-		msg := types.WithRouting(n.ID, 1, types.NewPromiseMessage(1, 1, 0, 0, nil))
+	for _, msg := range msgs {
 		pax.Step(msg)
 	}
-	messages = pax.Messages()
-	require.Len(t, messages, 3)
-	for i := range messages {
-		accept := messages[i].GetAccept()
-		require.True(t, consensus.IsAny(accept.Value))
-	}
-}
 
-func TestPaxosAcceptedMajority(t *testing.T) {
-	conf := defaultConfig()
-	pax := testPaxos(conf)
-
-	// Timeout should start a new ballot, and initialize helpers to track received promises
-	pax.Tick()
-	messages := pax.Messages()
-	require.Len(t, messages, 3)
-
-	for _, n := range conf.Configuration.Nodes {
-		if n.ID != conf.Node.ID {
-			pax.Step(types.WithRouting(n.ID, conf.Node.ID, types.NewPromiseMessage(1, 1, 0, 0, nil)))
-		}
-	}
-	messages = pax.Messages()
-	require.Len(t, messages, 3)
-
-	id := []byte("replica")
-	for _, n := range conf.Configuration.Nodes {
-		if n.ID != conf.Node.ID {
-			pax.Step(types.WithRouting(n.ID, conf.Node.ID, types.NewAcceptedMessage(1, 1, &types.Value{Id: id})))
-		}
-	}
-	messages = pax.Messages()
-	require.Len(t, messages, 6) // 3 Learned + 3 Accept Any
-
-	for i := 3; i < 6; i++ {
-		accept := messages[i].GetAccept()
-		require.NotNil(t, accept)
-		require.True(t, consensus.IsAny(accept.Value))
-	}
 	values := pax.Values()
 	require.Len(t, values, 1)
-	require.Equal(t, values[0].Value.Id, id)
+	require.Equal(t, value, values[0].Value)
 }
 
-func TestPaxosAcceptAsHeartbeat(t *testing.T) {
+func TestPaxosStartClassicRoundOnTimeout(t *testing.T) {
 	conf := defaultConfig()
 	pax := testPaxos(conf)
 
-	// Timeout should start a new ballot, and initialize helpers to track received promises
-	pax.Tick()
-
-	for _, n := range conf.Configuration.Nodes {
-		if n.ID != conf.Node.ID {
-			pax.Step(types.WithRouting(
-				n.ID,
-				conf.Node.ID,
-				types.NewPromiseMessage(1, 1, 0, 0, nil),
-			))
-		}
+	value := &types.Value{Id: []byte("test")}
+	pax.Propose(value)
+	msgs := pax.Messages()
+	require.Len(t, msgs, 3)
+	for _, msg := range msgs {
+		accepted := msg.GetAccepted()
+		require.NotNil(t, accepted)
+		require.Equal(t, value, accepted.Value)
 	}
 	pax.Tick()
+	msgs = pax.Messages()
+	require.Len(t, msgs, 3)
+	for _, msg := range msgs {
+		prepare := msg.GetPrepare()
+		require.NotNil(t, prepare)
+	}
+}
 
-	messages := pax.Messages()
-	require.Len(t, messages, 9)
-	// TODO 3 prepare, 3 accept, 3 heartbeat excluding itself
+func TestPaxosFullRoundWithConflicts(t *testing.T) {
+	n := 8
+	conf := nConfig(n)
+	pax := testPaxos(conf)
+
+	one := &types.Value{Id: []byte("one")}
+	two := &types.Value{Id: []byte("two")}
+
+	pax.Propose(one)
+	require.Len(t, pax.Messages(), n-1)
+	for _, node := range conf.Configuration.Nodes[1:5] {
+		pax.Step(types.WithRouting(node.ID, conf.Node.ID, types.NewAcceptedMessage(0, 1, one)))
+	}
+	for _, node := range conf.Configuration.Nodes[5:n] {
+		pax.Step(types.WithRouting(node.ID, conf.Node.ID, types.NewAcceptedMessage(0, 1, two)))
+	}
+	require.Empty(t, pax.Messages())
+	require.Empty(t, pax.Values())
+
+	pax.Tick()
+	msgs := pax.Messages()
+	require.Len(t, msgs, n-1)
+
+	for _, msg := range msgs {
+		prepare := msg.GetPrepare()
+		require.NotNil(t, prepare)
+		require.Equal(t, 1, int(prepare.Ballot))
+	}
+
+	for _, node := range conf.Configuration.Nodes[1:5] {
+		pax.Step(types.WithRouting(node.ID, conf.Node.ID, types.NewPromiseMessage(1, 1, 1, one)))
+	}
+	for _, node := range conf.Configuration.Nodes[5:n] {
+		pax.Step(types.WithRouting(node.ID, conf.Node.ID, types.NewPromiseMessage(1, 1, 1, two)))
+	}
+
+	msgs = pax.Messages()
+	require.Len(t, msgs, 2*n-2)
+	for _, msg := range msgs {
+		accept := msg.GetAccept()
+		if accept != nil {
+			require.Equal(t, one, accept.Value)
+		} else {
+			accepted := msg.GetAccepted()
+			require.NotNil(t, accepted)
+			require.Equal(t, one, accepted.Value)
+		}
+	}
 }

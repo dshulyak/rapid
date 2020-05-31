@@ -1,7 +1,6 @@
 {
     "NetworkDelay": "100ms",
     "ElectionTimeout": 40,
-    "HeartbeatTimeout": 15,
     "ReinforceTimeout": 100,
     "RetransmitTimeout": 1000,
     "Connectivity": 5,

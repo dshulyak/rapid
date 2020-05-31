@@ -29,10 +29,9 @@ func NewCluster(n int, tick time.Duration, jitter int64) *Cluster {
 	rand.Read(instanceID)
 	for i := 1; i <= n; i++ {
 		conf := consensus.Config{
-			Timeout:          8,
-			HeartbeatTimeout: 2,
-			Node:             conf.Nodes[i-1],
-			Configuration:    conf,
+			Timeout:       8,
+			Node:          conf.Nodes[i-1],
+			Configuration: conf,
 		}
 		tick := tick + time.Duration(rand.Int63n(jitter))*time.Millisecond
 		swarm := inproc.New(logger, network, uint64(i))

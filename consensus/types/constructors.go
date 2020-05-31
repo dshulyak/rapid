@@ -23,36 +23,14 @@ func NewPrepareMessage(ballot, seq uint64) *Message {
 	}
 }
 
-func NewFailedPromiseMessage(ballot uint64) *Message {
+func NewPromiseMessage(ballot, seq, voteBallot uint64, value *Value) *Message {
 	return &Message{
 		Type: &Message_Promise{
 			Promise: &Promise{
-				Ballot: ballot,
-			},
-		},
-	}
-}
-
-func NewPromiseMessage(ballot, seq, voteBallot, commitSeq uint64, value *Value) *Message {
-	return &Message{
-		Type: &Message_Promise{
-			Promise: &Promise{
-				Ballot:           ballot,
-				Sequence:         seq,
-				VoteBallot:       voteBallot,
-				CommitedSequence: commitSeq,
-				Value:            value,
-			},
-		},
-	}
-}
-
-func NewUpdatePromiseMessage(ballot, commitSeq uint64) *Message {
-	return &Message{
-		Type: &Message_Promise{
-			Promise: &Promise{
-				Ballot:           ballot,
-				CommitedSequence: commitSeq,
+				Ballot:     ballot,
+				Sequence:   seq,
+				VoteBallot: voteBallot,
+				Value:      value,
 			},
 		},
 	}

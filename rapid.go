@@ -48,9 +48,6 @@ type Config struct {
 	// ElectionTimeout if replica doesn't receive hearbeat for ElectionTimeout ticks
 	// it will start new election, by sending Prepare to other replicas.
 	ElectionTimeout int
-	// HeartbeatTimeout must be lower than election timeout.
-	// Leader will send last sent Accept message to every replica as a heartbeat.
-	HeartbeatTimeout int
 
 	// Monitoring
 
@@ -193,10 +190,9 @@ func (r Rapid) Run(ctx context.Context, updates chan<- *types.Configuration) err
 		r.logger,
 		r.network.ConsensusNetworkService(configuration),
 		consensus.Config{
-			Node:             node,
-			Configuration:    configuration,
-			Timeout:          r.conf.ElectionTimeout,
-			HeartbeatTimeout: r.conf.HeartbeatTimeout,
+			Node:          node,
+			Configuration: configuration,
+			Timeout:       r.conf.ElectionTimeout,
 		},
 		time.Duration(r.conf.NetworkDelay)+time.Duration(r.rng.Int63n(int64(r.conf.NetworkDelay)/2)),
 	)

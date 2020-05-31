@@ -6,10 +6,11 @@ import (
 	"github.com/dshulyak/rapid/consensus/types"
 )
 
-func newAggregate(qsize int) *aggregate {
+func newAggregate(qsize, safety int) *aggregate {
 	return &aggregate{
-		qsize: qsize,
-		from:  map[uint64]struct{}{},
+		qsize:  qsize,
+		safety: safety,
+		from:   map[uint64]struct{}{},
 	}
 }
 
@@ -21,6 +22,7 @@ type aggregateValue struct {
 // aggregate can be used to aggregate distinct messages
 type aggregate struct {
 	qsize   int // quorum size
+	safety  int // safety threshold (half of the fast quorum)
 	from    map[uint64]struct{}
 	highest uint64
 
@@ -64,7 +66,7 @@ func (a *aggregate) safe() (*types.Value, bool) {
 		if count == a.qsize {
 			return val.value, true
 		}
-		if count > a.qsize/2 {
+		if count > a.safety {
 			return val.value, false
 		}
 	}
@@ -74,11 +76,17 @@ func (a *aggregate) safe() (*types.Value, bool) {
 func (a *aggregate) any() *types.Value {
 	for i := range a.values {
 		val := &a.values[i]
-		if !IsAny(val.value) {
-			return val.value
-		}
+		return val.value
 	}
 	return nil
+}
+
+func (a *aggregate) iterateVoters(f func(uint64) bool) {
+	for id := range a.from {
+		if !f(id) {
+			return
+		}
+	}
 }
 
 func (a *aggregate) iterate(f func(*types.Value) bool) {
@@ -91,48 +99,4 @@ func (a *aggregate) iterate(f func(*types.Value) bool) {
 
 func (a *aggregate) complete() bool {
 	return len(a.from) >= a.qsize
-}
-
-func newQueue() *queue {
-	return &queue{
-		items: map[string]*types.Value{},
-	}
-}
-
-// queue is in-memory non thread safe fifo queue with ability to remove value by id from queue.
-// TODO it can be persisted in order not to lose values submitted by client, that are either pending or proposed.
-type queue struct {
-	order []string
-	items map[string]*types.Value
-}
-
-func (q *queue) add(item *types.Value) {
-	id := string(item.Id)
-	q.order = append(q.order, id)
-	q.items[id] = item
-}
-
-func (q *queue) pop() *types.Value {
-	for {
-		if len(q.order) == 0 {
-			return nil
-		}
-		id := q.order[0]
-		copy(q.order, q.order[1:])
-		last := len(q.order) - 1
-		q.order = q.order[:last]
-		item, exist := q.items[id]
-		if exist {
-			delete(q.items, id)
-			return item
-		}
-	}
-}
-
-func (q *queue) remove(id []byte) {
-	delete(q.items, string(id))
-}
-
-func (q *queue) empty() bool {
-	return len(q.items) == 0
 }
