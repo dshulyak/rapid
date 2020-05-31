@@ -4,12 +4,15 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io/ioutil"
 	"math/rand"
 	"os"
 	"os/signal"
 	"syscall"
 	"time"
+
+	_ "net/http/pprof"
 
 	"github.com/dshulyak/rapid"
 	"github.com/dshulyak/rapid/monitor/prober"
@@ -87,5 +90,8 @@ func main() {
 	for update := range updates {
 		logger.Sugar().With("configuration", update).Info("UPDATE")
 	}
-	must(group.Wait())
+	if err := group.Wait(); err != nil && errors.Is(err, context.Canceled) {
+		must(err)
+	}
+	fmt.Println("rapid service stopped")
 }

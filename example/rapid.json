@@ -1,12 +1,12 @@
 {
     "NetworkDelay": "100ms",
-    "ElectionTimeout": 40,
+    "ElectionTimeout": 10,
     "ReinforceTimeout": 100,
-    "RetransmitTimeout": 1000,
+    "RetransmitTimeout": -1,
     "Connectivity": 5,
     "LowWatermark": 3,
     "HighWatermark": 5,
-    "DialTimeout": "500ms",
-    "SendTimeout": "500ms",
+    "DialTimeout": "100ms",
+    "SendTimeout": "100ms",
     "Seed": {"IP": "0.0.0.0", "Port": 4001}
 }
