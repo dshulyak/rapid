@@ -34,6 +34,8 @@ func NewPaxos(logger *zap.SugaredLogger, conf Config) *Paxos {
 	classic := getClassicQuorum(n)
 	fast := getFastQuorum(n)
 	safety := getSafety(n)
+	accepted := map[uint64]*aggregate{}
+	accepted[0] = newAggregate(fast, safety)
 	return &Paxos{
 		conf:          conf,
 		replicaID:     conf.Node.ID,
@@ -45,7 +47,7 @@ func NewPaxos(logger *zap.SugaredLogger, conf Config) *Paxos {
 		fastQuorum:    fast,
 		safetyQuorum:  safety,
 		promised:      newAggregate(classic, safety),
-		accepted:      newAggregate(fast, safety),
+		accepted:      accepted,
 		log:           newValues(),
 	}
 }
@@ -77,7 +79,8 @@ type Paxos struct {
 
 	// promiseAggregate maps sequence to promise messages
 	promised *aggregate
-	accepted *aggregate
+	// accepted tracks messages for every ballot
+	accepted map[uint64]*aggregate
 
 	// pendingAccept is not nil if node is ready to send Accept with proposed value
 	// instead of queuing proposal.
@@ -106,6 +109,10 @@ func (p *Paxos) Tick() {
 		p.renewTimeout()
 		// start classic round
 		p.promised = newAggregate(p.classicQuorum, p.safetyQuorum)
+		p.logger.With(
+			"ballot", p.ballot+1,
+			"insntance", p.instanceID+1,
+		).Debug("sending prepare")
 		p.send(types.NewPrepareMessage(p.ballot+1, p.instanceID+1))
 	}
 }
@@ -126,6 +133,7 @@ func (p *Paxos) Propose(value *types.Value) {
 	p.logger.With(
 		"value ID", hex.EncodeToString(value.Id),
 		"ballot", p.ballot,
+		"instance", p.instanceID+1,
 	).Debug("voted for a value")
 
 	p.log.add(&types.LearnedValue{
@@ -134,7 +142,6 @@ func (p *Paxos) Propose(value *types.Value) {
 		Value:    value,
 	})
 	p.send(types.NewAcceptedMessage(p.ballot, p.instanceID+1, value))
-
 }
 
 // Messages returns staged messages and clears ingress of messages
@@ -154,8 +161,10 @@ func (p *Paxos) commit(values ...*types.LearnedValue) {
 
 			p.classicQuorum = getClassicQuorum(len(v.Value.Nodes))
 			p.fastQuorum = getFastQuorum(len(v.Value.Nodes))
-			p.accepted = newAggregate(p.fastQuorum, p.safetyQuorum)
-			p.promised = nil
+			p.accepted = map[uint64]*aggregate{
+				0: newAggregate(p.fastQuorum, p.safetyQuorum),
+			}
+			p.promised = newAggregate(p.classicQuorum, p.safetyQuorum)
 			p.proposed = false
 			p.instanceID = v.Sequence
 			p.ballot = 0
@@ -191,11 +200,9 @@ func (p *Paxos) sendOne(msg *types.Message, to uint64) {
 	msg = types.WithInstance(p.instanceID, msg)
 	p.replicas.resetTicks(to)
 	if msg.To == p.replicaID {
-		//p.logger.With("msg", msg).Debug("sending to self")
 		p.Step(msg)
 		return
 	}
-	//p.logger.With("msg", msg).Debug("sending to network")
 	p.messages = append(p.messages, msg)
 }
 
@@ -208,7 +215,8 @@ func (p *Paxos) Step(msg *types.Message) {
 	defer func() {
 		p.logger = p.mainLogger
 	}()
-	//p.logger.Debug("step")
+	// TODO change to trace. requires custom level
+	p.logger.With("message", msg).Debug("step")
 	if msg.To != p.replicaID {
 		p.logger.Error("delivered to wrong node.")
 		return
@@ -257,7 +265,6 @@ func (p *Paxos) stepPrepare(msg *types.Message) {
 		value = learned.Value
 		voted = learned.Ballot
 	}
-	p.accepted = newAggregate(p.classicQuorum, p.safetyQuorum)
 	p.sendOne(
 		types.NewPromiseMessage(
 			p.ballot,
@@ -281,7 +288,6 @@ func (p *Paxos) stepPromise(msg *types.Message) {
 
 	p.promised.add(msg.From, promise.Ballot, promise.Value)
 	if p.promised.complete() {
-		p.accepted = newAggregate(p.classicQuorum, p.safetyQuorum)
 		value, _ := p.promised.safe()
 		if value == nil {
 			value = p.promised.any()
@@ -314,20 +320,20 @@ func (p *Paxos) stepAccept(msg *types.Message) {
 
 func (p *Paxos) stepAccepted(msg *types.Message) {
 	accepted := msg.GetAccepted()
-	if p.ballot > accepted.Ballot {
-		return
-	} else if accepted.Ballot > p.ballot {
-		p.renewTimeout()
+	if accepted.Ballot > p.ballot {
 		p.ballot = accepted.Ballot
-		return
+	}
+	p.renewTimeout()
+	if _, exist := p.accepted[p.ballot]; !exist {
+		p.accepted[p.ballot] = newAggregate(p.classicQuorum, p.safetyQuorum)
 	}
 	p.logger.With(
 		"from", msg.From,
 		"sequence", accepted.Sequence,
 	).Debug("aggregating accepted message")
-	p.accepted.add(msg.From, accepted.Ballot, accepted.Value)
-	if p.accepted.complete() {
-		value, final := p.accepted.safe()
+	p.accepted[p.ballot].add(msg.From, accepted.Ballot, accepted.Value)
+	if p.accepted[p.ballot].complete() {
+		value, final := p.accepted[p.ballot].safe()
 		if final {
 			p.commit(&types.LearnedValue{
 				Ballot:   accepted.Ballot,

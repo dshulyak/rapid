@@ -34,6 +34,9 @@ func (a *aggregate) add(from uint64, ballot uint64, value *types.Value) {
 		return
 	}
 	a.from[from] = struct{}{}
+	if value == nil {
+		return
+	}
 	if ballot < a.highest {
 		return
 	}
