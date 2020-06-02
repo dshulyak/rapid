@@ -27,3 +27,13 @@ message Change {
 message Changes {
   repeated Change list = 1;
 }
+
+message BroadcastMessage {
+  uint64 from = 1;
+  repeated uint64 to = 2;
+  uint64 instanceID = 3;
+}
+
+message Batch {
+  repeated BroadcastMessage messages = 1;
+}
