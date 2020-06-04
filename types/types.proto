@@ -29,11 +29,8 @@ message Changes {
 }
 
 message BroadcastMessage {
-  uint64 from = 1;
-  repeated uint64 to = 2;
-  uint64 instanceID = 3;
-}
-
-message Batch {
-  repeated BroadcastMessage messages = 1;
+  uint64 seqNum = 1;
+  uint64 from = 2;
+  repeated uint64 to = 3;
+  uint64 instanceID = 4;
 }

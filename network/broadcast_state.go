@@ -17,20 +17,37 @@ type broadcastState struct {
 
 	network Network
 
-	wg          sync.WaitGroup
-	connections map[uint64]connection
+	seen map[uint64]uint64
+
+	lastSeqNum uint64
+
+	wg    sync.WaitGroup
+	peers map[uint64]peer
 
 	kg     *graph.KGraph
 	update <-chan struct{}
-
-	seen map[[32]byte]struct{}
 
 	watching chan []*types.BroadcastMessage
 	received []*types.BroadcastMessage
 }
 
+func (s *broadcastState) isNew(msg *types.BroadcastMessage) bool {
+	if msg.SeqNum <= s.seen[msg.From] {
+		return false
+	}
+	s.seen[msg.From] = msg.SeqNum
+	return true
+}
+
+func (s *broadcastState) nextSeqNum() uint64 {
+	next := s.lastSeqNum
+	s.lastSeqNum++
+	s.seen[s.conf.NodeID] = next
+	return next
+}
+
 func (s *broadcastState) reorg() {
-	for id := range s.connections {
+	for id := range s.peers {
 		old := true
 		s.kg.IterateObservers(s.conf.NodeID, func(n *types.Node) bool {
 			if n.ID == id {
@@ -40,13 +57,13 @@ func (s *broadcastState) reorg() {
 			return true
 		})
 		if old {
-			s.connections[id].Stop()
-			delete(s.connections, id)
+			s.peers[id].Stop()
+			delete(s.peers, id)
 		}
 	}
 	s.kg.IterateObservers(s.conf.NodeID, func(n *types.Node) bool {
 		n = n
-		if _, exist := s.connections[n.ID]; exist {
+		if _, exist := s.peers[n.ID]; exist {
 			return true
 		}
 		s.logger.With(
@@ -54,7 +71,7 @@ func (s *broadcastState) reorg() {
 		).Debug("created broadcaster")
 
 		ctx, cancel := context.WithCancel(s.ctx)
-		conn := connection{
+		p := peer{
 			Stop:     cancel,
 			node:     n,
 			logger:   s.logger.With("peer", n.ID),
@@ -65,11 +82,11 @@ func (s *broadcastState) reorg() {
 			retry:    s.conf.RetryPeriod,
 			egress:   make(chan []*types.BroadcastMessage, 1),
 		}
-		s.connections[n.ID] = conn
+		s.peers[n.ID] = p
 
 		s.wg.Add(1)
 		go func() {
-			err := conn.Run(ctx)
+			err := p.Run(ctx)
 			if err != nil && !errors.Is(err, context.Canceled) {
 				s.logger.With(
 					"node", n,
@@ -78,7 +95,7 @@ func (s *broadcastState) reorg() {
 				s.logger.With(
 					"node", n,
 					"error", err,
-				).Error("broadcaster crashed")
+				).Error("broadcaster failed")
 			}
 			s.wg.Done()
 		}()

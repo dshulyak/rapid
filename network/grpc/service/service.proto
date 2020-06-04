@@ -1,0 +1,15 @@
+syntax = "proto3";
+
+option go_package = "github.com/dshulyak/rapid/network/grpc/service";
+
+import "types/types.proto";
+
+message Batch {
+  repeated types.BroadcastMessage messages = 1;
+}
+
+message BatchResponse {}
+
+service Broadcaster {
+  rpc Send(Batch) returns (BatchResponse) {}
+}

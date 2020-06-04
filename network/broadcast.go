@@ -11,12 +11,8 @@ import (
 )
 
 type Network interface {
-	Register(func(context.Context, []*types.BroadcastMessage) error)
-	Dial(context.Context, *types.Node) (Connection, error)
-}
-
-type Server interface {
-	Register(func(context.Context, []*types.BroadcastMessage) error)
+	RegisterBroadcasterServer(func(context.Context, []*types.BroadcastMessage) error)
+	Dialer
 }
 
 type Connection interface {
@@ -42,7 +38,7 @@ func NewReliableBroadcast(logger *zap.SugaredLogger, network Network, last *grap
 		egress:  make(chan []*types.BroadcastMessage, 1),
 		watch:   make(chan []*types.BroadcastMessage, 1),
 	}
-	network.Register(rb.receive)
+	network.RegisterBroadcasterServer(rb.receive)
 	return rb
 }
 
@@ -85,13 +81,14 @@ func (rb ReliableBroadcast) Run(ctx context.Context) error {
 func (rb ReliableBroadcast) newState(ctx context.Context) *broadcastState {
 	kg, update := rb.last.Last()
 	state := &broadcastState{
-		kg:          kg,
-		update:      update,
-		connections: map[uint64]connection{},
-		network:     rb.network,
-		conf:        rb.conf,
-		logger:      rb.logger,
-		ctx:         ctx,
+		kg:      kg,
+		update:  update,
+		peers:   map[uint64]peer{},
+		network: rb.network,
+		conf:    rb.conf,
+		logger:  rb.logger,
+		ctx:     ctx,
+		seen:    map[uint64]uint64{},
 	}
 	state.reorg()
 	return state
@@ -105,27 +102,31 @@ func (rb ReliableBroadcast) selectOne(state *broadcastState) error {
 	case <-state.update:
 		state.kg, state.update = rb.last.Last()
 		state.reorg()
-	case state.received = <-rb.ingress:
-		state.watching = rb.watch
-		for i := range state.connections {
-			if err := state.connections[i].Send(state.ctx, state.received); err != nil {
-				rb.logger.With(
-					"error", err,
-					"node", i,
-				).Error("failed to send messages")
-			}
-		}
 	case state.watching <- state.received:
 		state.watching = nil
 		state.received = nil
-	case msgs := <-rb.egress:
-		for i := range state.connections {
-			if err := state.connections[i].Send(state.ctx, msgs); err != nil {
-				rb.logger.With(
-					"error", err,
-					"node", i,
-				).Error("failed to send messages")
+	case received := <-rb.ingress:
+		filtered := make([]*types.BroadcastMessage, 0, len(received))
+		for _, msg := range received {
+			if state.isNew(msg) {
+				filtered = append(filtered, msg)
 			}
+		}
+		if len(filtered) == 0 {
+			return nil
+		}
+
+		state.received = append(state.received, filtered...)
+		state.watching = rb.watch
+		for i := range state.peers {
+			_ = state.peers[i].Send(state.ctx, filtered)
+		}
+	case tosend := <-rb.egress:
+		for i := range tosend {
+			tosend[i].SeqNum = state.nextSeqNum()
+		}
+		for i := range state.peers {
+			_ = state.peers[i].Send(state.ctx, tosend)
 		}
 	}
 	return nil

@@ -8,10 +8,6 @@ import (
 
 	"github.com/dshulyak/rapid/bootstrap"
 	bgrpc "github.com/dshulyak/rapid/bootstrap/network/grpc"
-	"github.com/dshulyak/rapid/consensus"
-	cgrpc "github.com/dshulyak/rapid/consensus/network/grpc"
-	"github.com/dshulyak/rapid/monitor"
-	mgrpc "github.com/dshulyak/rapid/monitor/network/grpc"
 	"github.com/dshulyak/rapid/types"
 
 	"go.uber.org/zap"
@@ -48,14 +44,6 @@ func (n GRPCNetwork) BootstrapServer() bootstrap.NetworkServer {
 
 func (n GRPCNetwork) BootstrapClient() bootstrap.NetworkClient {
 	return bgrpc.NewClient(n.dialTimeout, n.sendTimeout)
-}
-
-func (n GRPCNetwork) ConsensusNetworkService(configuration *types.Configuration) consensus.NetworkService {
-	return cgrpc.New(n.logger, n.srv, configuration, n.dialTimeout, n.sendTimeout)
-}
-
-func (n GRPCNetwork) MonitorNetworkService(configuration *types.Configuration, node *types.Node) monitor.NetworkService {
-	return mgrpc.New(n.logger, node.ID, n.srv, n.dialTimeout, n.sendTimeout)
 }
 
 func (n GRPCNetwork) Listen(ctx context.Context, node *types.Node) error {
