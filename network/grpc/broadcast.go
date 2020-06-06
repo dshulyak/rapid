@@ -10,7 +10,7 @@ import (
 	"google.golang.org/grpc"
 )
 
-type broadcastServer func(context.Context, []*types.BroadcastMessage) error
+type broadcastServer func(context.Context, []*types.Message) error
 
 func (bs broadcastServer) Send(ctx context.Context, b *service.Batch) (*service.BatchResponse, error) {
 	return &service.BatchResponse{}, bs(ctx, b.Messages)
@@ -21,7 +21,7 @@ type broadcastClient struct {
 	client service.BroadcasterClient
 }
 
-func (bc broadcastClient) Send(ctx context.Context, msgs []*types.BroadcastMessage) error {
+func (bc broadcastClient) Send(ctx context.Context, msgs []*types.Message) error {
 	_, err := bc.client.Send(ctx, &service.Batch{Messages: msgs})
 	return err
 }
@@ -30,7 +30,7 @@ func (bc broadcastClient) Close() error {
 	return bc.conn.Close()
 }
 
-func (n GRPCNetwork) RegisterBroadcasterServer(f func(context.Context, []*types.BroadcastMessage) error) {
+func (n GRPCNetwork) RegisterBroadcasterServer(f func(context.Context, []*types.Message) error) {
 	service.RegisterBroadcasterServer(n.srv, broadcastServer(f))
 }
 

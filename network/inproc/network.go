@@ -5,6 +5,8 @@ import (
 	"errors"
 	"fmt"
 	"sync"
+
+	"github.com/dshulyak/rapid/network"
 )
 
 type Handler func(context.Context, interface{}) *Response
@@ -23,10 +25,12 @@ type Response struct {
 }
 
 func newPipe(ctx context.Context, from, to uint64, applied []Policy) *pipe {
+	ctx, cancel := context.WithCancel(ctx)
 	return &pipe{
-		ctx:  ctx,
-		from: from,
-		to:   to,
+		ctx:    ctx,
+		cancel: cancel,
+		from:   from,
+		to:     to,
 		// TODO reconsider using two buffers when framework will be extended with error conditions
 		messages: make(chan Request, 10),
 		// intentionally not buffered, to guarantee that next message will always will be received after policy was applied
@@ -37,6 +41,7 @@ func newPipe(ctx context.Context, from, to uint64, applied []Policy) *pipe {
 
 type pipe struct {
 	ctx      context.Context
+	cancel   func()
 	from, to uint64
 	policies chan Policy
 	applied  []Policy
@@ -50,7 +55,10 @@ func (p *pipe) send(msg Request) error {
 	case p.messages <- msg:
 		return nil
 	}
+}
 
+func (p *pipe) stop() {
+	p.cancel()
 }
 
 func (p *pipe) run(handlers map[uint64]Handler) {
@@ -142,6 +150,17 @@ func (n *Network) Send(req Request) error {
 		return err
 	}
 	return nil
+}
+
+func (n *Network) Connect(from, to uint64) (*pipe, error) {
+	return n.connect(from, to)
+}
+
+func (n *Network) BroadcastNetwork(id uint64) network.Network {
+	return broadcastBridge{
+		nodeID: id,
+		net:    n,
+	}
 }
 
 func (n *Network) Apply(policy Policy) {

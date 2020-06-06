@@ -8,10 +8,6 @@ import (
 	"go.uber.org/zap"
 )
 
-type Dialer interface {
-	BroadcasterClient(context.Context, *types.Node) (Connection, error)
-}
-
 type peer struct {
 	Stop func()
 
@@ -24,10 +20,10 @@ type peer struct {
 	retry              time.Duration
 
 	bufsize int
-	egress  chan []*types.BroadcastMessage
+	egress  chan []*types.Message
 }
 
-func (c peer) Send(ctx context.Context, msgs []*types.BroadcastMessage) error {
+func (c peer) Send(ctx context.Context, msgs []*types.Message) error {
 	select {
 	case <-ctx.Done():
 		return ctx.Err()
@@ -109,6 +105,9 @@ func (c peer) sendLoop(ctx context.Context, requests chan sendRequest) error {
 		err  error
 	)
 	for req := range requests {
+		c.logger.With(
+			"length", len(req.msgs),
+		).Debug("sending messages")
 		if conn == nil {
 			conn, err = c.net.BroadcasterClient(ctx, c.node)
 			if err != nil {
@@ -151,13 +150,13 @@ type peerState struct {
 	Errchan chan error
 	Closech chan error
 
-	Pending []*types.BroadcastMessage
-	Added   []*types.BroadcastMessage
+	Pending []*types.Message
+	Added   []*types.Message
 
 	Err error
 }
 
 type sendRequest struct {
-	msgs  []*types.BroadcastMessage
+	msgs  []*types.Message
 	error chan<- error
 }

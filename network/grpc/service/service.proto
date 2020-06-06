@@ -5,7 +5,7 @@ option go_package = "github.com/dshulyak/rapid/network/grpc/service";
 import "types/types.proto";
 
 message Batch {
-  repeated types.BroadcastMessage messages = 1;
+  repeated types.Message messages = 1;
 }
 
 message BatchResponse {}

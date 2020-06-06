@@ -28,9 +28,53 @@ message Changes {
   repeated Change list = 1;
 }
 
-message BroadcastMessage {
+message Message {
   uint64 seqNum = 1;
   uint64 from = 2;
   repeated uint64 to = 3;
   uint64 instanceID = 4;
+
+  oneof type {
+    Prepare prepare = 5;
+    Promise promise = 6;
+    Accept accept = 7;
+    Accepted accepted = 8;
+  }
+}
+
+message Prepare {
+  uint64 ballot = 1;
+  uint64 sequence = 2;
+}
+
+message Value {
+  bytes id = 1;
+  types.Changes changes = 2;
+  repeated types.Node nodes = 3;
+}
+
+message Promise {
+  uint64 ballot = 1;
+  uint64 sequence = 2;
+  uint64 voteBallot = 3;
+  Value value = 4;
+  uint64 commitedSequence = 5;
+}
+
+message Accept {
+  uint64 ballot = 1;
+  uint64 sequence = 2;
+  Value value = 3;
+}
+
+message Accepted {
+  uint64 ballot = 1;
+  uint64 sequence = 2;
+  Value value = 3;
+}
+
+message LearnedValue {
+  uint64 ballot = 1;
+  uint64 sequence = 2;
+  Value value = 3;
 }

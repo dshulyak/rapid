@@ -16,7 +16,7 @@ type testDialer struct {
 	mock.Mock
 }
 
-func (n *testDialer) Dial(ctx context.Context, node *types.Node) (Connection, error) {
+func (n *testDialer) BroadcasterClient(ctx context.Context, node *types.Node) (Connection, error) {
 	args := n.Called(ctx, node)
 	return args.Get(0).(Connection), args.Error(1)
 }
@@ -25,7 +25,7 @@ type testConn struct {
 	mock.Mock
 }
 
-func (c *testConn) Send(ctx context.Context, msgs []*types.BroadcastMessage) error {
+func (c *testConn) Send(ctx context.Context, msgs []*types.Message) error {
 	args := c.Called(ctx, msgs)
 	return args.Error(0)
 }
@@ -45,9 +45,9 @@ func (s scenario) test(ctx context.Context, state *peerState) {
 	}
 }
 
-func send(tb testing.TB, p peer, msgs ...[]*types.BroadcastMessage) stepTester {
+func send(tb testing.TB, p peer, msgs ...[]*types.Message) stepTester {
 	return func(ctx context.Context, state *peerState) {
-		total := []*types.BroadcastMessage{}
+		total := []*types.Message{}
 		for _, batch := range msgs {
 			require.NoError(tb, p.Send(ctx, batch))
 			cont, err := p.selectOne(state, ctx, nil)
@@ -121,10 +121,10 @@ func TestPeerDeliver(t *testing.T) {
 		logger: zap.NewNop().Sugar(),
 		node:   &types.Node{},
 		net:    net,
-		egress: make(chan []*types.BroadcastMessage, 1),
+		egress: make(chan []*types.Message, 1),
 	}
 
-	msgs := []*types.BroadcastMessage{{InstanceID: 9}}
+	msgs := []*types.Message{{InstanceID: 9}}
 	conn := &testConn{}
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
@@ -132,7 +132,7 @@ func TestPeerDeliver(t *testing.T) {
 
 	state := p.newPeerState(ctx)
 
-	net.On("Dial", mock.Anything, mock.Anything).Return(conn, nil).Once()
+	net.On("BroadcasterClient", mock.Anything, mock.Anything).Return(conn, nil).Once()
 	conn.On("Send", mock.Anything, mock.Anything).Return(nil).Once()
 	conn.On("Close").Return(nil).Once()
 
@@ -150,13 +150,13 @@ func TestPeerBuffersMessages(t *testing.T) {
 		logger: zap.NewNop().Sugar(),
 		node:   &types.Node{},
 		net:    net,
-		egress: make(chan []*types.BroadcastMessage, 1),
+		egress: make(chan []*types.Message, 1),
 	}
 
-	msgs := []*types.BroadcastMessage{{InstanceID: 9}}
+	msgs := []*types.Message{{InstanceID: 9}}
 	conn := &testConn{}
 
-	net.On("Dial", mock.Anything, mock.Anything).Return(conn, nil).Once()
+	net.On("BroadcasterClient", mock.Anything, mock.Anything).Return(conn, nil).Once()
 	waiter := make(chan time.Time)
 	conn.On("Send", mock.Anything, mock.Anything).Return(nil).WaitUntil(waiter)
 	conn.On("Close").Return(nil).Once()
@@ -188,14 +188,14 @@ func TestPeerBuffersForRetry(t *testing.T) {
 		logger: zap.NewNop().Sugar(),
 		node:   &types.Node{},
 		net:    net,
-		egress: make(chan []*types.BroadcastMessage, 1),
+		egress: make(chan []*types.Message, 1),
 	}
 
-	msgs := []*types.BroadcastMessage{{InstanceID: 9}}
+	msgs := []*types.Message{{InstanceID: 9}}
 	conn := &testConn{}
 
 	terr := errors.New("test error")
-	net.On("Dial", mock.Anything, mock.Anything).Return(conn, nil).Once()
+	net.On("BroadcasterClient", mock.Anything, mock.Anything).Return(conn, nil).Once()
 	conn.On("Send", mock.Anything, mock.Anything).Return(terr).Once()
 	conn.On("Send", mock.Anything, mock.Anything).Return(nil).Once()
 	conn.On("Close").Return(nil).Once()
