@@ -6,7 +6,7 @@
     "Connectivity": 5,
     "LowWatermark": 3,
     "HighWatermark": 5,
-    "DialTimeout": "100ms",
-    "SendTimeout": "100ms",
+    "DialTimeout": "1s",
+    "SendTimeout": "1s",
     "Seed": {"IP": "0.0.0.0", "Port": 4001}
 }

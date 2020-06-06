@@ -27,11 +27,11 @@ type broadcastState struct {
 	kg     *graph.KGraph
 	update <-chan struct{}
 
-	watching chan []*types.BroadcastMessage
-	received []*types.BroadcastMessage
+	watching chan []*types.Message
+	received []*types.Message
 }
 
-func (s *broadcastState) isNew(msg *types.BroadcastMessage) bool {
+func (s *broadcastState) isNew(msg *types.Message) bool {
 	if msg.SeqNum <= s.seen[msg.From] {
 		return false
 	}
@@ -40,10 +40,9 @@ func (s *broadcastState) isNew(msg *types.BroadcastMessage) bool {
 }
 
 func (s *broadcastState) nextSeqNum() uint64 {
-	next := s.lastSeqNum
 	s.lastSeqNum++
-	s.seen[s.conf.NodeID] = next
-	return next
+	s.seen[s.conf.NodeID] = s.lastSeqNum
+	return s.lastSeqNum
 }
 
 func (s *broadcastState) reorg() {
@@ -59,6 +58,7 @@ func (s *broadcastState) reorg() {
 		if old {
 			s.peers[id].Stop()
 			delete(s.peers, id)
+			delete(s.seen, s.conf.NodeID)
 		}
 	}
 	s.kg.IterateObservers(s.conf.NodeID, func(n *types.Node) bool {
@@ -80,7 +80,7 @@ func (s *broadcastState) reorg() {
 			dtimeout: s.conf.DialTimeout,
 			btimeout: s.conf.SendTimeout,
 			retry:    s.conf.RetryPeriod,
-			egress:   make(chan []*types.BroadcastMessage, 1),
+			egress:   make(chan []*types.Message, 1),
 		}
 		s.peers[n.ID] = p
 

@@ -11,12 +11,16 @@ import (
 )
 
 type Network interface {
-	RegisterBroadcasterServer(func(context.Context, []*types.BroadcastMessage) error)
+	RegisterBroadcasterServer(func(context.Context, []*types.Message) error)
 	Dialer
 }
 
+type Dialer interface {
+	BroadcasterClient(context.Context, *types.Node) (Connection, error)
+}
+
 type Connection interface {
-	Send(context.Context, []*types.BroadcastMessage) error
+	Send(context.Context, []*types.Message) error
 	Close() error
 }
 
@@ -30,13 +34,16 @@ type Config struct {
 
 func NewReliableBroadcast(logger *zap.SugaredLogger, network Network, last *graph.LastKG, conf Config) ReliableBroadcast {
 	rb := ReliableBroadcast{
-		conf:    conf,
-		logger:  logger,
+		conf: conf,
+		logger: logger.With(
+			"component", "broadcaster",
+			"ID", conf.NodeID,
+		),
 		network: network,
 		last:    last,
-		ingress: make(chan []*types.BroadcastMessage, 1),
-		egress:  make(chan []*types.BroadcastMessage, 1),
-		watch:   make(chan []*types.BroadcastMessage, 1),
+		ingress: make(chan []*types.Message, 1),
+		egress:  make(chan []*types.Message, 1),
+		watch:   make(chan []*types.Message, 1),
 	}
 	network.RegisterBroadcasterServer(rb.receive)
 	return rb
@@ -49,10 +56,10 @@ type ReliableBroadcast struct {
 	network Network
 	last    *graph.LastKG
 
-	ingress, egress, watch chan []*types.BroadcastMessage
+	ingress, egress, watch chan []*types.Message
 }
 
-func (rb ReliableBroadcast) receive(ctx context.Context, msgs []*types.BroadcastMessage) error {
+func (rb ReliableBroadcast) receive(ctx context.Context, msgs []*types.Message) error {
 	select {
 	case <-ctx.Done():
 		return ctx.Err()
@@ -61,11 +68,11 @@ func (rb ReliableBroadcast) receive(ctx context.Context, msgs []*types.Broadcast
 	}
 }
 
-func (rb ReliableBroadcast) Egress() chan<- []*types.BroadcastMessage {
+func (rb ReliableBroadcast) Egress() chan<- []*types.Message {
 	return rb.egress
 }
 
-func (rb ReliableBroadcast) Watch() <-chan []*types.BroadcastMessage {
+func (rb ReliableBroadcast) Watch() <-chan []*types.Message {
 	return rb.watch
 }
 
@@ -106,13 +113,14 @@ func (rb ReliableBroadcast) selectOne(state *broadcastState) error {
 		state.watching = nil
 		state.received = nil
 	case received := <-rb.ingress:
-		filtered := make([]*types.BroadcastMessage, 0, len(received))
+		filtered := make([]*types.Message, 0, len(received))
 		for _, msg := range received {
 			if state.isNew(msg) {
 				filtered = append(filtered, msg)
 			}
 		}
 		if len(filtered) == 0 {
+			rb.logger.Debug("no new messages")
 			return nil
 		}
 
