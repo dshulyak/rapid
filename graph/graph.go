@@ -2,7 +2,6 @@ package graph
 
 import (
 	"sort"
-	"sync/atomic"
 
 	"github.com/dshulyak/rapid/types"
 )
@@ -18,8 +17,8 @@ func New(k int, nodes []*types.Node) *KGraph {
 		nodeUIDs = append(nodeUIDs, n.ID)
 	}
 
+	tmp := make([]uint64, lth)
 	for i := range graphs {
-		tmp := make([]uint64, lth)
 		copy(tmp, nodeUIDs)
 
 		g := &graph{
@@ -137,38 +136,4 @@ func fnvhash64(seed uint8, data uint64) uint64 {
 		data >>= 8
 	}
 	return hash
-}
-
-func NewLast(kg *KGraph) *LastKG {
-	last := &LastKG{}
-	last.Update(kg)
-	return last
-}
-
-type notifiable struct {
-	kg    *KGraph
-	event chan struct{}
-}
-
-// LastKG is a utility to broadcast updates.
-// When channel notification is received
-type LastKG struct {
-	value atomic.Value
-}
-
-func (c *LastKG) Update(kg *KGraph) {
-	current := c.value.Load()
-	c.value.Store(notifiable{kg, make(chan struct{})})
-	if current != nil {
-		close(current.(notifiable).event)
-	}
-}
-
-func (c *LastKG) Last() (*KGraph, <-chan struct{}) {
-	val := c.value.Load().(notifiable)
-	return val.kg, val.event
-}
-
-func (c *LastKG) Graph() *KGraph {
-	return c.value.Load().(notifiable).kg
 }

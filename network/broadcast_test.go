@@ -6,7 +6,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/dshulyak/rapid/graph"
 	"github.com/dshulyak/rapid/network"
 	"github.com/dshulyak/rapid/network/inproc"
 	"github.com/dshulyak/rapid/types"
@@ -39,8 +38,7 @@ func TestBroadcasterDeliver(t *testing.T) {
 	for i := 1; i <= size; i++ {
 		nodes[i-1] = &types.Node{ID: uint64(i)}
 	}
-	kg := graph.New(1, nodes)
-	last := graph.NewLast(kg)
+	last := types.Last(&types.Configuration{Nodes: nodes})
 
 	broadcaster := make([]network.ReliableBroadcast, size)
 	ctx, cancel := context.WithCancel(context.Background())
@@ -54,6 +52,7 @@ func TestBroadcasterDeliver(t *testing.T) {
 			last,
 			network.Config{
 				NodeID:      nodes[i].ID,
+				Fanout:      1,
 				DialTimeout: 3 * time.Second,
 				SendTimeout: 3 * time.Second,
 				RetryPeriod: 3 * time.Second,

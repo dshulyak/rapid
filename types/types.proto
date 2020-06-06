@@ -17,15 +17,12 @@ message Configuration {
 
 message Change {
   enum ChangeType {
-    JOIN = 0;
-    REMOVE = 1;
+    NONE = 0;
+    JOIN = 1;
+    REMOVE = 2;
   }
   ChangeType type = 1;
   Node node = 2;
-}
-
-message Changes {
-  repeated Change list = 1;
 }
 
 message Message {
@@ -48,9 +45,8 @@ message Prepare {
 }
 
 message Value {
-  bytes id = 1;
-  types.Changes changes = 2;
-  repeated types.Node nodes = 3;
+  repeated Change changes = 1;
+  repeated Node nodes = 2;
 }
 
 message Promise {

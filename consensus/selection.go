@@ -1,9 +1,7 @@
 package consensus
 
 import (
-	"bytes"
-
-	"github.com/dshulyak/rapid/consensus/types"
+	"github.com/dshulyak/rapid/types"
 )
 
 func newAggregate(qsize, safety int) *aggregate {
@@ -43,7 +41,7 @@ func (a *aggregate) add(from uint64, ballot uint64, value *types.Value) {
 	a.highest = ballot
 	for i := range a.values {
 		val := &a.values[i]
-		if val.value == nil || bytes.Compare(val.value.Id, value.Id) == 0 {
+		if val.value == nil || types.EqualValues(val.value, value) {
 			val.votes = append(val.votes, ballot)
 		}
 	}
