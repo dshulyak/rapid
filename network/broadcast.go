@@ -27,23 +27,27 @@ type Connection interface {
 type Config struct {
 	NodeID      uint64
 	QueueSize   int
+	Fanout      int
 	DialTimeout time.Duration
 	SendTimeout time.Duration
 	RetryPeriod time.Duration
 }
 
-func NewReliableBroadcast(logger *zap.SugaredLogger, network Network, last *graph.LastKG, conf Config) ReliableBroadcast {
+func NewReliableBroadcast(logger *zap.SugaredLogger,
+	network Network,
+	configuration *types.LastConfiguration,
+	conf Config) ReliableBroadcast {
 	rb := ReliableBroadcast{
 		conf: conf,
 		logger: logger.With(
 			"component", "broadcaster",
 			"ID", conf.NodeID,
 		),
-		network: network,
-		last:    last,
-		ingress: make(chan []*types.Message, 1),
-		egress:  make(chan []*types.Message, 1),
-		watch:   make(chan []*types.Message, 1),
+		network:       network,
+		configuration: configuration,
+		ingress:       make(chan []*types.Message, 1),
+		egress:        make(chan []*types.Message, 1),
+		watch:         make(chan []*types.Message, 1),
 	}
 	network.RegisterBroadcasterServer(rb.receive)
 	return rb
@@ -52,9 +56,9 @@ func NewReliableBroadcast(logger *zap.SugaredLogger, network Network, last *grap
 type ReliableBroadcast struct {
 	conf Config
 
-	logger  *zap.SugaredLogger
-	network Network
-	last    *graph.LastKG
+	logger        *zap.SugaredLogger
+	network       Network
+	configuration *types.LastConfiguration
 
 	ingress, egress, watch chan []*types.Message
 }
@@ -86,7 +90,8 @@ func (rb ReliableBroadcast) Run(ctx context.Context) error {
 }
 
 func (rb ReliableBroadcast) newState(ctx context.Context) *broadcastState {
-	kg, update := rb.last.Last()
+	configuration, update := rb.configuration.Last()
+	kg := graph.New(rb.conf.Fanout, configuration.Nodes)
 	state := &broadcastState{
 		kg:      kg,
 		update:  update,
@@ -107,7 +112,9 @@ func (rb ReliableBroadcast) selectOne(state *broadcastState) error {
 		state.wg.Wait()
 		return state.ctx.Err()
 	case <-state.update:
-		state.kg, state.update = rb.last.Last()
+		configuration, update := rb.configuration.Last()
+		kg := graph.New(rb.conf.Fanout, configuration.Nodes)
+		state.kg, state.update = kg, update
 		state.reorg()
 	case state.watching <- state.received:
 		state.watching = nil

@@ -6,9 +6,9 @@ func WithInstance(instance uint64, msg *Message) *Message {
 }
 
 // WithRouting mutates original msg objects, by adding passed from, to fields to the object.
-func WithRouting(from, to uint64, msg *Message) *Message {
+func WithRouting(from uint64, to []uint64, msg *Message) *Message {
 	msg.From = from
-	msg.To = []uint64{to}
+	msg.To = to
 	return msg
 }
 

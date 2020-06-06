@@ -1,19 +1,18 @@
 package consensus
 
 import (
-	"encoding/hex"
+	"time"
 
-	"github.com/dshulyak/rapid/consensus/types"
 	"go.uber.org/zap"
 
-	atypes "github.com/dshulyak/rapid/types"
+	"github.com/dshulyak/rapid/types"
 )
 
 type Config struct {
-	Node          *atypes.Node
-	Configuration *atypes.Configuration
-
-	Timeout int
+	Node          *types.Node
+	Configuration *types.Configuration
+	Period        time.Duration
+	Timeout       int
 }
 
 func getFastQuorum(lth int) int {
@@ -42,7 +41,6 @@ func NewPaxos(logger *zap.SugaredLogger, conf Config) *Paxos {
 		instanceID:    conf.Configuration.ID,
 		mainLogger:    logger,
 		logger:        logger,
-		replicas:      newReplicasInfo(conf.Configuration.Nodes),
 		classicQuorum: classic,
 		fastQuorum:    fast,
 		safetyQuorum:  safety,
@@ -51,8 +49,6 @@ func NewPaxos(logger *zap.SugaredLogger, conf Config) *Paxos {
 		log:           newValues(),
 	}
 }
-
-var _ Backend = (*Paxos)(nil)
 
 // Paxos is an implementation of fast multipaxos variant of the algorithm.
 // it is not thread safe, and meant to be wrapped with component that we will serialize
@@ -68,11 +64,6 @@ type Paxos struct {
 
 	// logger is extended with context information
 	mainLogger, logger *zap.SugaredLogger
-
-	// we need to have information if replica is currently reachable or not
-	// to avoid sending useless messages
-	// use Accept{Any} as a heartbeat message
-	replicas replicasInfo
 
 	// timeout ticks
 	ticks int
@@ -92,9 +83,9 @@ type Paxos struct {
 	ballot   uint64
 
 	// messages are consumed by paxos reactor and will be sent over the network
-	messages []*types.Message
+	Messages []*types.Message
 	// values meant to be consumed by state machine application.
-	values []*types.LearnedValue
+	Values []*types.LearnedValue
 }
 
 // instantiate ticks once value was proposed
@@ -131,7 +122,6 @@ func (p *Paxos) Propose(value *types.Value) {
 	p.ticks = p.conf.Timeout
 	p.proposed = true
 	p.logger.With(
-		"value ID", hex.EncodeToString(value.Id),
 		"ballot", p.ballot,
 		"instance", p.instanceID+1,
 	).Debug("voted for a value")
@@ -144,66 +134,47 @@ func (p *Paxos) Propose(value *types.Value) {
 	p.send(types.NewAcceptedMessage(p.ballot, p.instanceID+1, value))
 }
 
-// Messages returns staged messages and clears ingress of messages
-func (p *Paxos) Messages() []*types.Message {
-	msgs := p.messages
-	p.messages = nil
-	return msgs
-}
-
 // TODO we can commit only one value per paxos instance
-func (p *Paxos) commit(values ...*types.LearnedValue) {
-	for _, v := range values {
-		if v.Sequence > p.log.commited() {
-			p.values = append(p.values, v)
-			p.log.commit(v)
-			p.replicas.update(v.Value.Changes)
+func (p *Paxos) commit(v *types.LearnedValue) {
+	if v.Sequence > p.instanceID {
+		p.Values = append(p.Values, v)
+		p.log.commit(v)
 
-			p.classicQuorum = getClassicQuorum(len(v.Value.Nodes))
-			p.fastQuorum = getFastQuorum(len(v.Value.Nodes))
-			p.accepted = map[uint64]*aggregate{
-				0: newAggregate(p.fastQuorum, p.safetyQuorum),
-			}
-			p.promised = newAggregate(p.classicQuorum, p.safetyQuorum)
-			p.proposed = false
-			p.instanceID = v.Sequence
-			p.ballot = 0
-			p.ticks = -1
-
-			p.logger.With(
-				"sequence", v.Sequence,
-				"classic", p.classicQuorum,
-				"fast", p.fastQuorum,
-			).Info("updating configuration")
-			// TODO if node with id was removed from cluster - panic and make application
-			// bootstrap itself again
+		p.classicQuorum = getClassicQuorum(len(v.Value.Nodes))
+		p.fastQuorum = getFastQuorum(len(v.Value.Nodes))
+		p.accepted = map[uint64]*aggregate{
+			0: newAggregate(p.fastQuorum, p.safetyQuorum),
 		}
+		p.promised = newAggregate(p.classicQuorum, p.safetyQuorum)
+		p.proposed = false
+		p.instanceID = v.Sequence
+		p.ballot = 0
+		p.ticks = -1
+
+		p.logger.With(
+			"sequence", v.Sequence,
+			"classic", p.classicQuorum,
+			"fast", p.fastQuorum,
+		).Info("updating configuration")
+		// TODO if node with id was removed from cluster - panic and make application
+		// bootstrap itself again
 	}
 }
 
-func (p *Paxos) Values() []*types.LearnedValue {
-	values := p.values
-	p.values = nil
-	return values
-}
-
-func (p *Paxos) send(original *types.Message) {
-	p.replicas.iterate(func(state *replicaState) bool {
-		msg := *original
-		p.sendOne(&msg, state.id)
-		return true
-	})
-}
-
-func (p *Paxos) sendOne(msg *types.Message, to uint64) {
+func (p *Paxos) send(msg *types.Message, to ...uint64) {
 	msg = types.WithRouting(p.replicaID, to, msg)
 	msg = types.WithInstance(p.instanceID, msg)
-	p.replicas.resetTicks(to)
-	if msg.To == p.replicaID {
+	if to == nil {
+		p.Messages = append(p.Messages, msg)
 		p.Step(msg)
-		return
 	}
-	p.messages = append(p.messages, msg)
+	for i := range to {
+		if to[i] != p.replicaID {
+			continue
+		}
+		p.Step(msg)
+		break
+	}
 }
 
 func (p *Paxos) Step(msg *types.Message) {
@@ -217,14 +188,6 @@ func (p *Paxos) Step(msg *types.Message) {
 	}()
 	// TODO change to trace. requires custom level
 	p.logger.With("message", msg).Debug("step")
-	if msg.To != p.replicaID {
-		p.logger.Error("delivered to wrong node.")
-		return
-	}
-
-	if !p.replicas.exist(msg.From) {
-		return
-	}
 
 	if msg.InstanceID != p.instanceID {
 		p.logger.With(
@@ -265,7 +228,7 @@ func (p *Paxos) stepPrepare(msg *types.Message) {
 		value = learned.Value
 		voted = learned.Ballot
 	}
-	p.sendOne(
+	p.send(
 		types.NewPromiseMessage(
 			p.ballot,
 			prepare.Sequence,
