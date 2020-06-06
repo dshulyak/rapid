@@ -30,6 +30,10 @@ func getClassicQuorum(lth int) int {
 func NewPaxos(logger *zap.SugaredLogger, conf Config) *Paxos {
 	logger = logger.Named("paxos").With("node", conf.Node.ID)
 	n := len(conf.Configuration.Nodes)
+	replicas := map[uint64]struct{}{}
+	for _, node := range nodes {
+		replicas[node.ID] = struct{}{}
+	}
 	classic := getClassicQuorum(n)
 	fast := getFastQuorum(n)
 	safety := getSafety(n)
@@ -38,6 +42,7 @@ func NewPaxos(logger *zap.SugaredLogger, conf Config) *Paxos {
 	return &Paxos{
 		conf:          conf,
 		replicaID:     conf.Node.ID,
+		replicas:      replicas,
 		instanceID:    conf.Configuration.ID,
 		mainLogger:    logger,
 		logger:        logger,
@@ -57,6 +62,7 @@ type Paxos struct {
 	conf Config
 
 	replicaID uint64
+	replicas  map[uint64]struct{}
 
 	// instanceID and classic/fast quorums must be updated after each configuration commit.
 	instanceID                              uint64
@@ -146,6 +152,10 @@ func (p *Paxos) commit(v *types.LearnedValue) {
 	}
 	p.promised = newAggregate(p.classicQuorum, p.safetyQuorum)
 	p.proposed = false
+	p.replicas = map[uint64]struct{}{}
+	for _, node := range v.Value.Nodes {
+		p.replicas[node.ID] = struct{}{}
+	}
 	p.instanceID = v.Sequence
 	p.ballot = 0
 	p.ticks = -1
@@ -160,6 +170,11 @@ func (p *Paxos) commit(v *types.LearnedValue) {
 }
 
 func (p *Paxos) send(msg *types.Message, to ...uint64) {
+	// if replica is not part of the current cluster it should not try
+	// to participate in consensus
+	if _, exist := p.replicas[p.replicaID]; !exist {
+		return
+	}
 	msg = types.WithRouting(p.replicaID, to, msg)
 	msg = types.WithInstance(p.instanceID, msg)
 	if to == nil {
