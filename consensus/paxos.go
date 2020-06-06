@@ -136,29 +136,27 @@ func (p *Paxos) Propose(value *types.Value) {
 
 // TODO we can commit only one value per paxos instance
 func (p *Paxos) commit(v *types.LearnedValue) {
-	if v.Sequence > p.instanceID {
-		p.Values = append(p.Values, v)
-		p.log.commit(v)
+	p.Values = append(p.Values, v)
+	p.log.commit(v)
 
-		p.classicQuorum = getClassicQuorum(len(v.Value.Nodes))
-		p.fastQuorum = getFastQuorum(len(v.Value.Nodes))
-		p.accepted = map[uint64]*aggregate{
-			0: newAggregate(p.fastQuorum, p.safetyQuorum),
-		}
-		p.promised = newAggregate(p.classicQuorum, p.safetyQuorum)
-		p.proposed = false
-		p.instanceID = v.Sequence
-		p.ballot = 0
-		p.ticks = -1
-
-		p.logger.With(
-			"sequence", v.Sequence,
-			"classic", p.classicQuorum,
-			"fast", p.fastQuorum,
-		).Info("updating configuration")
-		// TODO if node with id was removed from cluster - panic and make application
-		// bootstrap itself again
+	p.classicQuorum = getClassicQuorum(len(v.Value.Nodes))
+	p.fastQuorum = getFastQuorum(len(v.Value.Nodes))
+	p.accepted = map[uint64]*aggregate{
+		0: newAggregate(p.fastQuorum, p.safetyQuorum),
 	}
+	p.promised = newAggregate(p.classicQuorum, p.safetyQuorum)
+	p.proposed = false
+	p.instanceID = v.Sequence
+	p.ballot = 0
+	p.ticks = -1
+
+	p.logger.With(
+		"sequence", v.Sequence,
+		"classic", p.classicQuorum,
+		"fast", p.fastQuorum,
+	).Info("updated configuration")
+	// TODO if node with id was removed from cluster - panic and make application
+	// bootstrap itself again
 }
 
 func (p *Paxos) send(msg *types.Message, to ...uint64) {
@@ -181,6 +179,7 @@ func (p *Paxos) Step(msg *types.Message) {
 	p.logger = p.mainLogger.With(
 		"ballot", p.ballot,
 		"instance", p.instanceID,
+		"msg instance", msg.InstanceID,
 		"from", msg.From,
 	)
 	defer func() {
@@ -189,10 +188,11 @@ func (p *Paxos) Step(msg *types.Message) {
 	// TODO change to trace. requires custom level
 	p.logger.With("message", msg).Debug("step")
 
-	if msg.InstanceID != p.instanceID {
-		p.logger.With(
-			"msg instance", msg.InstanceID,
-		).Debug("instance conflict")
+	if msg.InstanceID < p.instanceID {
+		p.logger.Debug("old message")
+		return
+	} else if msg.InstanceID > p.instanceID {
+		p.logger.Debug("node is running with outdated configuration")
 		return
 	}
 
@@ -286,17 +286,16 @@ func (p *Paxos) stepAccepted(msg *types.Message) {
 	if accepted.Ballot > p.ballot {
 		p.ballot = accepted.Ballot
 	}
-	p.renewTimeout()
-	if _, exist := p.accepted[p.ballot]; !exist {
-		p.accepted[p.ballot] = newAggregate(p.classicQuorum, p.safetyQuorum)
+	if _, exist := p.accepted[accepted.Ballot]; !exist {
+		p.accepted[accepted.Ballot] = newAggregate(p.classicQuorum, p.safetyQuorum)
 	}
 	p.logger.With(
 		"from", msg.From,
 		"sequence", accepted.Sequence,
 	).Debug("aggregating accepted message")
-	p.accepted[p.ballot].add(msg.From, accepted.Ballot, accepted.Value)
-	if p.accepted[p.ballot].complete() {
-		value, final := p.accepted[p.ballot].safe()
+	p.accepted[accepted.Ballot].add(msg.From, accepted.Ballot, accepted.Value)
+	if p.accepted[accepted.Ballot].complete() {
+		value, final := p.accepted[accepted.Ballot].safe()
 		if final {
 			p.commit(&types.LearnedValue{
 				Ballot:   accepted.Ballot,
