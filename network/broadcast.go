@@ -38,11 +38,8 @@ func NewReliableBroadcast(logger *zap.SugaredLogger,
 	configuration *types.LastConfiguration,
 	conf Config) ReliableBroadcast {
 	rb := ReliableBroadcast{
-		conf: conf,
-		logger: logger.With(
-			"component", "broadcaster",
-			"ID", conf.NodeID,
-		),
+		conf:          conf,
+		logger:        logger.Named("broadcast"),
 		network:       network,
 		configuration: configuration,
 		ingress:       make(chan []*types.Message, 1),
@@ -66,6 +63,7 @@ type ReliableBroadcast struct {
 func (rb ReliableBroadcast) receive(ctx context.Context, msgs []*types.Message) error {
 	select {
 	case <-ctx.Done():
+		rb.logger.Debug("request timedout")
 		return ctx.Err()
 	case rb.ingress <- msgs:
 		return nil
@@ -120,11 +118,20 @@ func (rb ReliableBroadcast) selectOne(state *broadcastState) error {
 		state.watching = nil
 		state.received = nil
 	case received := <-rb.ingress:
-		filtered := make([]*types.Message, 0, len(received))
+		filtered := []*types.Message{}
 		for _, msg := range received {
-			if state.isNew(msg) {
+			nw := state.isNew(msg)
+			if nw {
 				filtered = append(filtered, msg)
 			}
+			rb.logger.With(
+				"instance", msg.InstanceID,
+				"type", msg.Type,
+				"new", nw,
+				"from", msg.From,
+				"msg sequence", msg.SeqNum,
+				"total", len(received),
+			).Debug("received broadcast")
 		}
 		if len(filtered) == 0 {
 			rb.logger.Debug("no new messages")
@@ -139,6 +146,10 @@ func (rb ReliableBroadcast) selectOne(state *broadcastState) error {
 	case tosend := <-rb.egress:
 		for i := range tosend {
 			tosend[i].SeqNum = state.nextSeqNum()
+			rb.logger.With(
+				"instance", tosend[i].InstanceID,
+				"type", tosend[i].Type,
+			).Debugf("broadcasting")
 		}
 		for i := range state.peers {
 			_ = state.peers[i].Send(state.ctx, tosend)

@@ -2,6 +2,7 @@ package network_test
 
 import (
 	"context"
+	"math/rand"
 	"os"
 	"testing"
 	"time"
@@ -47,7 +48,7 @@ func TestBroadcasterDeliver(t *testing.T) {
 	for i := range nodes {
 		i := i
 		broadcaster[i] = network.NewReliableBroadcast(
-			testLogger(),
+			testLogger().With("node", nodes[i].ID),
 			net.BroadcastNetwork(nodes[i].ID),
 			last,
 			network.Config{
@@ -62,20 +63,28 @@ func TestBroadcasterDeliver(t *testing.T) {
 			return broadcaster[i].Run(ctx)
 		})
 	}
-	sent := []*types.Message{}
+	rand.Seed(time.Now().Unix())
 	for i := 0; i < 7; i++ {
-		sent = append(sent, &types.Message{
+		sender := rand.Intn(len(broadcaster))
+		sent := []*types.Message{{
+			From:       uint64(sender + 1),
 			InstanceID: uint64(i),
-		})
-	}
-	broadcaster[0].Egress() <- sent
-	select {
-	case msgs := <-broadcaster[3].Watch():
-		require.Len(t, msgs, len(sent))
-		for i := range sent {
-			require.Equal(t, sent[i], msgs[i])
+		}}
+		broadcaster[sender].Egress() <- sent
+
+		for i := 0; i < len(broadcaster); i++ {
+			if i == sender {
+				continue
+			}
+			select {
+			case msgs := <-broadcaster[i].Watch():
+				require.Len(t, msgs, len(sent))
+				for i := range sent {
+					require.Equal(t, sent[i], msgs[i])
+				}
+			case <-time.After(time.Second):
+				require.FailNow(t, "failed waiting for messages")
+			}
 		}
-	case <-time.After(time.Second):
-		require.FailNow(t, "failed waiting for messages")
 	}
 }

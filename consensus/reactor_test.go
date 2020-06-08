@@ -22,89 +22,129 @@ func consistent(t *testing.T, cluster *Cluster, expected []*types.Value, total i
 	return nil
 }
 
-func TestManagerNoConflictsProgress(t *testing.T) {
+func verifyUpdated(t *testing.T,
+	cluster *Cluster,
+	mutator func(),
+	nodes []*types.Node,
+	timeout time.Duration,
+	proposals ...[]*types.Node,
+) {
+	t.Helper()
+	updates := map[uint64]<-chan struct{}{}
+	for _, n := range nodes {
+		_, update := cluster.Last(n.ID).Last()
+		updates[n.ID] = update
+	}
+	mutator()
+	after := time.After(timeout)
+	for _, update := range updates {
+		select {
+		case <-update:
+		case <-after:
+			require.FailNow(t, "failed waiting for updated configuration")
+		}
+	}
+	for _, proposal := range proposals {
+		for _, n := range nodes {
+			configuration := cluster.Last(n.ID).Configuration()
+			require.Equal(t, configuration.Nodes, proposal)
+		}
+	}
+}
+
+func TestReactorProposeSameValue(t *testing.T) {
 	cluster := NewCluster(4, 10*time.Millisecond, 40)
 	cluster.Start()
 	defer cluster.Stop()
 
 	ctx := context.TODO()
-	proposed := &types.Value{Nodes: cluster.Nodes()}
-	require.NoError(t, cluster.Propose(ctx, proposed))
-	require.NoError(t, consistent(t, cluster, []*types.Value{proposed}, 4))
 
-	proposed = &types.Value{Nodes: cluster.Nodes()}
-	require.NoError(t, cluster.Propose(ctx, proposed))
-	require.NoError(t, consistent(t, cluster, []*types.Value{proposed}, 4))
+	added := &types.Node{ID: 777}
+	changes := []*types.Change{
+		{
+			Type: types.Change_JOIN,
+			Node: added,
+		},
+	}
+	proposed := &types.Value{
+		Nodes:   append(cluster.Nodes(), added),
+		Changes: changes,
+	}
+	for i := 0; i < 2; i++ {
+		added.ID++
+		verifyUpdated(t, cluster, func() {
+			require.NoError(t, cluster.Propose(ctx, proposed))
+		}, cluster.Nodes(), 10*time.Second, proposed.Nodes)
+	}
 }
 
-func TestManagerConflictingProgress(t *testing.T) {
-	cluster := NewCluster(4, 10*time.Millisecond, 40)
+func TestReactorReachConsensusWithTwoNodes(t *testing.T) {
+	cluster := NewCluster(2, 40*time.Millisecond, 40)
 	cluster.Start()
 	defer cluster.Stop()
 
 	ctx := context.TODO()
 
-	first := &types.Value{Nodes: cluster.Nodes()}
-	second := &types.Value{Nodes: cluster.Nodes()}
-	require.NoError(t, cluster.Reactor(1).Propose(ctx, first))
-	require.NoError(t, cluster.Reactor(2).Propose(ctx, first))
-	require.NoError(t, cluster.Reactor(3).Propose(ctx, second))
-	require.NoError(t, cluster.Reactor(4).Propose(ctx, second))
-
-	expected := []*types.Value{first, second}
-	require.NoError(t, consistent(t, cluster, expected, 4))
+	added := &types.Node{ID: 777}
+	changes := []*types.Change{
+		{
+			Type: types.Change_JOIN,
+			Node: added,
+		},
+	}
+	proposed := &types.Value{
+		Nodes:   append(cluster.Nodes(), added),
+		Changes: changes,
+	}
+	verifyUpdated(t, cluster, func() {
+		require.NoError(t, cluster.Propose(ctx, proposed))
+	}, cluster.Nodes(), 10*time.Second, proposed.Nodes)
 }
 
-func TestManagerReachConsensusWithTwoNodes(t *testing.T) {
-	cluster := NewCluster(2, 10*time.Millisecond, 40)
-	cluster.Start()
-	defer cluster.Stop()
-
-	ctx := context.TODO()
-
-	proposed := &types.Value{Nodes: cluster.Nodes()}
-	require.NoError(t, cluster.Propose(ctx, proposed))
-	require.NoError(t, consistent(t, cluster, []*types.Value{proposed}, 2))
-}
-
-func TestManagerDowngrade(t *testing.T) {
+func TestReactorDowngrade(t *testing.T) {
 	cluster := NewCluster(3, 10*time.Millisecond, 40)
 	cluster.Start()
 	defer cluster.Stop()
 
 	ctx := context.TODO()
 
+	node := &types.Node{ID: 777}
 	for i := 0; i < 3; i++ {
-		add := &types.Node{ID: 777}
-		nodes := make([]*types.Node, 4)
+		nodes := make([]*types.Node, 3)
 		copy(nodes, cluster.Nodes())
-		nodes = append(nodes, add)
+		nodes = append(nodes, node)
 		upgrade := &types.Value{
 			Nodes: nodes,
 			Changes: []*types.Change{
 				{
 					Type: types.Change_JOIN,
-					Node: add,
+					Node: node,
 				},
-			}}
-		require.NoError(t, cluster.Propose(ctx, upgrade))
-		require.NoError(t, consistent(t, cluster, []*types.Value{upgrade}, 3))
+			},
+		}
+
+		verifyUpdated(t, cluster, func() {
+			require.NoError(t, cluster.Propose(ctx, upgrade))
+		}, cluster.Nodes(), 10*time.Second, upgrade.Nodes)
 
 		downgrade := &types.Value{
 			Nodes: cluster.Nodes(),
 			Changes: []*types.Change{
 				{
 					Type: types.Change_REMOVE,
-					Node: add,
+					Node: node,
 				},
 			}}
-		require.NoError(t, cluster.Propose(ctx, downgrade))
-		require.NoError(t, consistent(t, cluster, []*types.Value{downgrade}, 3))
+
+		verifyUpdated(t, cluster, func() {
+			require.NoError(t, cluster.Propose(ctx, downgrade))
+		}, cluster.Nodes(), 10*time.Second, downgrade.Nodes)
 	}
 }
 
-func TestManagerNoProgressDuringPartition(t *testing.T) {
-	cluster := NewCluster(4, 10*time.Millisecond, 40)
+func TestReactorProgressWithMajority(t *testing.T) {
+	size := 5
+	cluster := NewCluster(size, 20*time.Millisecond, 60)
 	cluster.Start()
 	defer cluster.Stop()
 
@@ -118,36 +158,23 @@ func TestManagerNoProgressDuringPartition(t *testing.T) {
 			[]uint64{
 				nodes[2].ID,
 				nodes[3].ID,
+				nodes[4].ID,
 			},
 		))
 
 	ctx := context.TODO()
-	proposed := &types.Value{Nodes: cluster.Nodes()}
-	require.NoError(t, cluster.Propose(ctx, proposed))
-	cluster.Network().Apply(inproc.Cancel{})
-	require.NoError(t, consistent(t, cluster, []*types.Value{proposed}, 4))
-}
 
-func TestManagerProgressWithMajority(t *testing.T) {
-	cluster := NewCluster(4, 10*time.Millisecond, 40)
-	cluster.Start()
-	defer cluster.Stop()
-
-	nodes := cluster.Nodes()
-	cluster.Network().Apply(
-		inproc.NewPartition(
-			[]uint64{
-				nodes[0].ID,
+	node := &types.Node{ID: 777}
+	upgrade := &types.Value{
+		Nodes: append(cluster.Nodes(), node),
+		Changes: []*types.Change{
+			{
+				Type: types.Change_JOIN,
+				Node: node,
 			},
-			[]uint64{
-				nodes[1].ID,
-				nodes[2].ID,
-				nodes[3].ID,
-			},
-		))
-
-	ctx := context.TODO()
-	proposed := &types.Value{Nodes: cluster.Nodes()}
-	require.NoError(t, cluster.Propose(ctx, proposed))
-	require.NoError(t, consistent(t, cluster, []*types.Value{proposed}, 3))
+		},
+	}
+	verifyUpdated(t, cluster, func() {
+		require.NoError(t, cluster.Propose(ctx, upgrade))
+	}, nodes[2:], 10*time.Second, upgrade.Nodes)
 }

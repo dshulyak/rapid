@@ -31,6 +31,11 @@ type broadcastState struct {
 	received []*types.Message
 }
 
+func (s *broadcastState) inCluster(id uint64) bool {
+	_, exist := s.peers[id]
+	return exist
+}
+
 func (s *broadcastState) isNew(msg *types.Message) bool {
 	if msg.SeqNum <= s.seen[msg.From] {
 		return false
@@ -48,7 +53,7 @@ func (s *broadcastState) nextSeqNum() uint64 {
 func (s *broadcastState) reorg() {
 	for id := range s.peers {
 		old := true
-		s.kg.IterateObservers(s.conf.NodeID, func(n *types.Node) bool {
+		s.kg.IterateEdges(s.conf.NodeID, func(n *types.Node) bool {
 			if n.ID == id {
 				old = false
 				return false
@@ -61,14 +66,11 @@ func (s *broadcastState) reorg() {
 			delete(s.seen, s.conf.NodeID)
 		}
 	}
-	s.kg.IterateObservers(s.conf.NodeID, func(n *types.Node) bool {
+	s.kg.IterateEdges(s.conf.NodeID, func(n *types.Node) bool {
 		n = n
 		if _, exist := s.peers[n.ID]; exist {
 			return true
 		}
-		s.logger.With(
-			"node", n,
-		).Debug("created broadcaster")
 
 		ctx, cancel := context.WithCancel(s.ctx)
 		p := peer{
@@ -86,14 +88,13 @@ func (s *broadcastState) reorg() {
 
 		s.wg.Add(1)
 		go func() {
+			p.logger.Debug("created broadcaster")
+
 			err := p.Run(ctx)
-			if err != nil && !errors.Is(err, context.Canceled) {
-				s.logger.With(
-					"node", n,
-				).Debug("exited broadcaster")
+			if err == nil || errors.Is(err, context.Canceled) {
+				p.logger.Debug("exited broadcaster")
 			} else {
-				s.logger.With(
-					"node", n,
+				p.logger.With(
 					"error", err,
 				).Error("broadcaster failed")
 			}

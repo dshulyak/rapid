@@ -7,6 +7,7 @@ import (
 	"github.com/dshulyak/rapid/network"
 	"github.com/dshulyak/rapid/network/grpc/service"
 	"github.com/dshulyak/rapid/types"
+
 	"google.golang.org/grpc"
 )
 
