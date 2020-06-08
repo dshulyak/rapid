@@ -24,10 +24,11 @@ func NewCluster(n int, tick time.Duration, jitter int64) *Cluster {
 	}
 	configurations := map[uint64]*types.LastConfiguration{}
 	reactors := map[uint64]*consensus.Reactor{}
+	broadcasters := map[uint64]network.BroadcastFacade{}
 	for i := 1; i <= n; i++ {
 		id := uint64(i)
 		conf := consensus.Config{
-			Timeout:       4,
+			Timeout:       10,
 			Node:          conf.Nodes[i-1],
 			Configuration: conf,
 			Period:        tick + time.Duration(rand.Int63n(jitter))*time.Millisecond,
@@ -35,20 +36,21 @@ func NewCluster(n int, tick time.Duration, jitter int64) *Cluster {
 		last := types.Last(conf.Configuration)
 		configurations[id] = last
 		logger := logger.With("node", id)
+		rb := network.NewReliableBroadcast(
+			logger,
+			net.BroadcastNetwork(id),
+			last,
+			network.Config{
+				NodeID:      id,
+				Fanout:      4,
+				DialTimeout: time.Second,
+				SendTimeout: time.Second,
+				RetryPeriod: time.Second,
+			},
+		)
+		broadcasters[id] = network.NewBroadcastFacade(rb)
 		reactors[id] = consensus.NewReactor(logger,
-			network.NewBroadcastFacade(
-				network.NewReliableBroadcast(
-					logger,
-					net.BroadcastNetwork(id),
-					last,
-					network.Config{
-						NodeID:      id,
-						Fanout:      2,
-						DialTimeout: time.Second,
-						SendTimeout: time.Second,
-						RetryPeriod: time.Second,
-					},
-				)),
+			broadcasters[id],
 			last,
 			consensus.NewPaxos(logger, conf),
 			conf.Period)
@@ -66,6 +68,7 @@ func NewCluster(n int, tick time.Duration, jitter int64) *Cluster {
 		network:        net,
 		reactors:       reactors,
 		configurations: configurations,
+		broadcasters:   broadcasters,
 	}
 }
 
@@ -83,6 +86,7 @@ type Cluster struct {
 
 	configurations map[uint64]*types.LastConfiguration
 	reactors       map[uint64]*consensus.Reactor
+	broadcasters   map[uint64]network.BroadcastFacade
 }
 
 func (c *Cluster) Network() *inproc.Network {
@@ -91,6 +95,10 @@ func (c *Cluster) Network() *inproc.Network {
 
 func (c *Cluster) Start() {
 	for i := range c.reactors {
+		rb := c.broadcasters[i]
+		c.group.Go(func() error {
+			return rb.Run(c.ctx)
+		})
 		r := c.reactors[i]
 		c.group.Go(func() error {
 			return r.Run(c.ctx)

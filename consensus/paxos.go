@@ -28,10 +28,10 @@ func getClassicQuorum(lth int) int {
 }
 
 func NewPaxos(logger *zap.SugaredLogger, conf Config) *Paxos {
-	logger = logger.Named("paxos").With("node", conf.Node.ID)
+	logger = logger.Named("paxos")
 	n := len(conf.Configuration.Nodes)
 	replicas := map[uint64]struct{}{}
-	for _, node := range nodes {
+	for _, node := range conf.Configuration.Nodes {
 		replicas[node.ID] = struct{}{}
 	}
 	classic := getClassicQuorum(n)
@@ -165,8 +165,6 @@ func (p *Paxos) commit(v *types.LearnedValue) {
 		"classic", p.classicQuorum,
 		"fast", p.fastQuorum,
 	).Info("updated configuration")
-	// TODO if node with id was removed from cluster - panic and make application
-	// bootstrap itself again
 }
 
 func (p *Paxos) send(msg *types.Message, to ...uint64) {
@@ -181,12 +179,12 @@ func (p *Paxos) send(msg *types.Message, to ...uint64) {
 		p.Messages = append(p.Messages, msg)
 		p.Step(msg)
 	}
-	for i := range to {
-		if to[i] != p.replicaID {
-			continue
+	if len(to) == 1 {
+		if to[0] == p.replicaID {
+			p.Step(msg)
+		} else {
+			p.Messages = append(p.Messages, msg)
 		}
-		p.Step(msg)
-		break
 	}
 }
 
@@ -201,7 +199,7 @@ func (p *Paxos) Step(msg *types.Message) {
 		p.logger = p.mainLogger
 	}()
 	// TODO change to trace. requires custom level
-	p.logger.With("message", msg).Debug("step")
+	//p.logger.With("message", msg).Debug("step")
 
 	if msg.InstanceID < p.instanceID {
 		p.logger.Debug("old message")
@@ -243,6 +241,7 @@ func (p *Paxos) stepPrepare(msg *types.Message) {
 		value = learned.Value
 		voted = learned.Ballot
 	}
+	p.logger.Debug("promised")
 	p.send(
 		types.NewPromiseMessage(
 			p.ballot,

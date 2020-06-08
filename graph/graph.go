@@ -66,6 +66,17 @@ func (k *KGraph) IterateObservers(v uint64, fn func(*types.Node) bool) {
 	}
 }
 
+func (k *KGraph) IterateEdges(u uint64, fn func(*types.Node) bool) {
+	for _, g := range k.graphs {
+		if !fn(k.nodes[g.observer(u)]) {
+			return
+		}
+		if !fn(k.nodes[g.subject(u)]) {
+			return
+		}
+	}
+}
+
 type graph struct {
 	seed                uint8
 	ordered             []uint64

@@ -105,9 +105,6 @@ func (c peer) sendLoop(ctx context.Context, requests chan sendRequest) error {
 		err  error
 	)
 	for req := range requests {
-		c.logger.With(
-			"length", len(req.msgs),
-		).Debug("sending messages")
 		if conn == nil {
 			conn, err = c.net.BroadcasterClient(ctx, c.node)
 			if err != nil {
@@ -116,6 +113,13 @@ func (c peer) sendLoop(ctx context.Context, requests chan sendRequest) error {
 				req.error <- err
 				continue
 			}
+		}
+		for _, msg := range req.msgs {
+			c.logger.With(
+				"instance", msg.InstanceID,
+				"type", msg.Type,
+				"from", msg.From,
+			).Debug("direct send")
 		}
 		err = conn.Send(ctx, req.msgs)
 		if err != nil {

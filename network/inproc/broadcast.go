@@ -18,13 +18,24 @@ type broadcastClient struct {
 }
 
 func (c broadcastClient) Send(ctx context.Context, msgs []*types.Message) error {
-	return c.pipe.send(Request{
-		Context: ctx,
-		From:    c.from,
-		To:      c.to,
-		Code:    broadcastCode,
-		Object:  msgs,
+	resp := make(chan *Response, 1)
+	err := c.pipe.send(Request{
+		Context:  ctx,
+		From:     c.from,
+		To:       c.to,
+		Code:     broadcastCode,
+		Object:   msgs,
+		Response: resp,
 	})
+	if err != nil {
+		return err
+	}
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case r := <-resp:
+		return r.Err
+	}
 }
 
 func (c broadcastClient) Close() error {

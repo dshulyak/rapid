@@ -4,6 +4,7 @@ import (
 	"context"
 
 	"github.com/dshulyak/rapid/types"
+	"golang.org/x/sync/errgroup"
 )
 
 func NewBroadcastFacade(rb ReliableBroadcast) BroadcastFacade {
@@ -24,4 +25,15 @@ func (bf BroadcastFacade) Subscribe(ctx context.Context) (*Subscription, error) 
 
 func (bf BroadcastFacade) Egress() chan<- []*types.Message {
 	return bf.rb.Egress()
+}
+
+func (bf BroadcastFacade) Run(ctx context.Context) error {
+	group, ctx := errgroup.WithContext(ctx)
+	group.Go(func() error {
+		return bf.rb.Run(ctx)
+	})
+	group.Go(func() error {
+		return bf.mx.Run(ctx)
+	})
+	return group.Wait()
 }
