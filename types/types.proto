@@ -36,6 +36,7 @@ message Message {
     Promise promise = 6;
     Accept accept = 7;
     Accepted accepted = 8;
+    Alert alert = 9;
   }
 }
 
@@ -74,3 +75,9 @@ message LearnedValue {
   uint64 sequence = 2;
   Value value = 3;
 }
+
+message Alert {
+  uint64 observer = 1;
+  uint64 subject = 2;
+  types.Change change = 3;
+};

@@ -8,8 +8,8 @@ import (
 	"time"
 
 	"github.com/dshulyak/rapid/monitor"
-	"github.com/dshulyak/rapid/monitor/network/inproc"
-	network "github.com/dshulyak/rapid/network/inproc"
+	"github.com/dshulyak/rapid/network"
+	"github.com/dshulyak/rapid/network/inproc"
 	"github.com/dshulyak/rapid/types"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/zap"
@@ -28,7 +28,7 @@ func (fd TestFailureDetector) Monitor(ctx context.Context, n *types.Node) error 
 
 type testCluster struct {
 	initial  *types.Configuration
-	network  *network.Network
+	network  *inproc.Network
 	logger   *zap.SugaredLogger
 	template monitor.Config
 
@@ -48,20 +48,35 @@ func (tc *testCluster) setup() {
 	group, ctx := errgroup.WithContext(ctx)
 	tc.group = group
 	tc.managers = map[uint64]*monitor.Manager{}
+	last := types.Last(tc.initial)
 	for _, n := range tc.initial.Nodes {
 		conf := tc.template
 		conf.Node = n
+		bf := network.NewBroadcastFacade(
+			network.NewReliableBroadcast(
+				tc.logger,
+				tc.network.BroadcastNetwork(n.ID),
+				last,
+				network.Config{
+					NodeID:      n.ID,
+					Fanout:      1,
+					DialTimeout: time.Second,
+					SendTimeout: time.Second,
+					RetryPeriod: 10 * time.Second,
+				}))
 		man := monitor.NewManager(
 			tc.logger,
 			conf,
-			tc.initial,
+			last,
 			tc.fd,
-			inproc.New(tc.logger, n.ID, tc.network),
+			bf,
 		)
-		man.Update(tc.initial)
 		tc.managers[n.ID] = man
 		group.Go(func() error {
 			return man.Run(ctx)
+		})
+		group.Go(func() error {
+			return bf.Run(ctx)
 		})
 	}
 }
@@ -93,71 +108,23 @@ func testLogger() *zap.SugaredLogger {
 	return nopLogger()
 }
 
-func TestManagerJoin(t *testing.T) {
-	nodes := genNodes(20)
-	net := network.NewNetwork()
-	defer net.Stop()
-
-	tc := testCluster{
-		logger:  testLogger(),
-		initial: &types.Configuration{Nodes: nodes},
-		fd:      TestFailureDetector{},
-		network: net,
-		template: monitor.Config{
-			K:                 3,
-			LW:                2,
-			HW:                3,
-			TimeoutPeriod:     100 * time.Millisecond,
-			ReinforceTimeout:  3,
-			RetransmitTimeout: 10,
-		},
-	}
-	tc.setup()
-	defer tc.stop()
-
-	joiner := &types.Node{ID: 101}
-	conf := tc.template
-	conf.Node = joiner
-
-	man := monitor.NewManager(
-		tc.logger,
-		conf,
-		tc.initial,
-		tc.fd,
-		inproc.New(tc.logger, joiner.ID, net),
-	)
-	require.NoError(t, man.Join(context.TODO()))
-
-	cuts := [][]*types.Change{}
-	for _, m := range tc.managers {
-		select {
-		case cut := <-m.Changes():
-			cuts = append(cuts, cut)
-		case <-time.After(10 * time.Second):
-			require.FailNow(t, "timed out waitign for changes")
-		}
-	}
-	require.Len(t, cuts, len(tc.managers))
-}
-
 func TestManagerDetectFailed(t *testing.T) {
-	nodes := genNodes(4)
-	net := network.NewNetwork()
+	configuration := genConfiguration(4)
+	net := inproc.NewNetwork()
 	defer net.Stop()
 
 	failed := TestFailureDetector{1: struct{}{}}
 	tc := testCluster{
 		logger:  testLogger(),
-		initial: &types.Configuration{Nodes: nodes},
+		initial: configuration,
 		fd:      failed,
 		network: net,
 		template: monitor.Config{
-			K:                 3,
-			LW:                2,
-			HW:                3,
-			TimeoutPeriod:     10 * time.Millisecond,
-			ReinforceTimeout:  3,
-			RetransmitTimeout: 10,
+			K:                3,
+			LW:               2,
+			HW:               3,
+			TimeoutPeriod:    10 * time.Millisecond,
+			ReinforceTimeout: 3,
 		},
 	}
 	tc.setup()
@@ -171,7 +138,7 @@ func TestManagerDetectFailed(t *testing.T) {
 		select {
 		case cut := <-m.Changes():
 			cuts = append(cuts, cut)
-		case <-time.After(10 * time.Second):
+		case <-time.After(3 * time.Second):
 			require.FailNow(t, "timed out waitign for changes")
 		}
 	}

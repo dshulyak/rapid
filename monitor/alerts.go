@@ -3,75 +3,48 @@ package monitor
 import (
 	"time"
 
-	mtypes "github.com/dshulyak/rapid/monitor/types"
+	"github.com/dshulyak/rapid/graph"
 	"github.com/dshulyak/rapid/types"
+
 	"go.uber.org/zap"
 )
 
 type Config struct {
-	Node              *types.Node
-	K                 int
-	LW, HW            int
-	TimeoutPeriod     time.Duration
-	ReinforceTimeout  int
-	RetransmitTimeout int
+	Node             *types.Node
+	K                int
+	LW, HW           int
+	TimeoutPeriod    time.Duration
+	ReinforceTimeout int
 }
 
-func NewAlerts(logger *zap.SugaredLogger, kg *KGraph, conf Config) *Alerts {
+func NewAlerts(logger *zap.SugaredLogger, configuration *types.Configuration, conf Config) *Alerts {
 	alerts := &Alerts{
-		conf:       conf,
-		logger:     logger.With("ID", conf.Node.ID).Named("alerts"),
-		id:         conf.Node.ID,
-		reinforce:  conf.ReinforceTimeout,
-		observed:   map[uint64]*observedAlert{},
-		retransmit: conf.RetransmitTimeout,
+		conf:     conf,
+		logger:   logger.With("node", conf.Node.ID).Named("alerts"),
+		observed: map[uint64]*observedAlert{},
 	}
-	alerts.Update(kg)
+	alerts.Update(configuration)
 	return alerts
 }
 
 type Alerts struct {
-	conf Config
-
+	conf   Config
 	logger *zap.SugaredLogger
 
+	instanceID uint64
+	kg         *graph.KGraph
+
 	lw, hw int
-	id     uint64
 
-	// reinforce timeout. alert needs to be reinforced by every observer if it didn't became stable
-	// after `reinforce` ticks since first alert was observed.
-	reinforce int
-	observed  map[uint64]*observedAlert
+	observed map[uint64]*observedAlert
 
-	// retransmit timeout.
-	// alerts are delivered over unreliable broadcast channel, we have no assumption
-	// over current connectivity
-	retransmit, rticks int
-	alerts             []*mtypes.Alert
-	pending            []*mtypes.Alert
-
-	cuts []*types.Change
-
-	kg *KGraph
+	Changes  []*types.Change
+	Messages []*types.Message
 }
 
-func (a *Alerts) DetectedCut() []*types.Change {
-	c := a.cuts
-	a.cuts = nil
-	return c
-}
-
-func (a *Alerts) Pending() []*mtypes.Alert {
-	rst := a.pending
-	a.pending = nil
-	if len(rst) > 0 {
-		a.rticks = 0
-	}
-	return rst
-}
-
-func (a *Alerts) Update(kg *KGraph) {
-	a.kg = kg
+func (a *Alerts) Update(configuration *types.Configuration) {
+	a.kg = graph.New(a.conf.K, configuration.Nodes)
+	a.instanceID = configuration.ID
 	a.lw = a.conf.LW
 	if a.lw > a.kg.K {
 		a.lw = a.kg.K
@@ -88,61 +61,54 @@ func (a *Alerts) Update(kg *KGraph) {
 	for id := range a.observed {
 		delete(a.observed, id)
 	}
-	a.alerts = nil
-	a.pending = nil
-	a.cuts = nil
-	a.rticks = 0
+	a.Changes = nil
+	a.Messages = nil
 }
 
 func (a *Alerts) Tick() {
-	a.rticks++
-	if a.rticks == a.retransmit {
-		// TODO retransmit each alert only N times
-		if len(a.alerts) > 0 {
-			a.logger.With(
-				"alerts", len(a.alerts),
-				"ticks", a.rticks,
-				"retransmit", a.retransmit,
-			).Debug("retransmit")
-			a.pending = append(a.pending, a.alerts...)
-		}
-	}
 	for _, observed := range a.observed {
 		if len(observed.received) < a.lw {
 			continue
 		}
-		_, voted := observed.received[a.id]
+		_, voted := observed.received[a.conf.Node.ID]
 		if voted {
 			continue
 		}
 		a.kg.IterateObservers(observed.id, func(n *types.Node) bool {
-			if n.ID == a.id {
+			if n.ID == a.conf.Node.ID {
 				observed.ticks++
 				return false
 			}
 			return true
 		})
-		if observed.ticks == a.reinforce {
-			alert := &mtypes.Alert{
-				Observer: a.id,
-				Subject:  observed.id,
-				Change:   observed.change,
-			}
+		if observed.ticks == a.conf.ReinforceTimeout {
+			alert := types.NewAlert(a.conf.Node.ID, observed.id, observed.change)
 			a.logger.With("alert", alert).Debug("reinforce")
+			a.send(alert)
 			a.Observe(alert)
 		}
 	}
 }
 
-func (a *Alerts) Observe(alert *mtypes.Alert) {
-	if alert.Subject == a.id {
+func (a *Alerts) send(msg *types.Message) {
+	a.Messages = append(a.Messages, types.WithInstance(a.instanceID, msg))
+}
+
+func (a *Alerts) Observe(msg *types.Message) {
+	if msg.InstanceID != a.instanceID {
 		return
 	}
-	// FIXME can be more efficient, no need to loop through same stuff on every iteration
-
+	alert := msg.GetAlert()
+	if alert == nil {
+		return
+	}
 	observed := a.observed[alert.Subject]
 	if observed == nil {
-		observed = &observedAlert{change: alert.Change, id: alert.Subject, received: map[uint64]struct{}{}}
+		observed = &observedAlert{
+			change:   alert.Change,
+			id:       alert.Subject,
+			received: map[uint64]struct{}{},
+		}
 		a.observed[alert.Subject] = observed
 	}
 
@@ -161,9 +127,6 @@ func (a *Alerts) Observe(alert *mtypes.Alert) {
 		"change type", alert.Change.Type,
 	).Debug("observed first time")
 	// record alert from our node in both sets, for sending and retransmission
-
-	a.alerts = append(a.alerts, alert)
-	a.pending = append(a.pending, alert)
 
 	observed.received[alert.Observer] = struct{}{}
 	count := 0
@@ -240,7 +203,7 @@ func (a *Alerts) Observe(alert *mtypes.Alert) {
 	for _, cand := range candidates {
 		a.logger.With("change", cand.change).Info("detected change")
 		cand.detected = true
-		a.cuts = append(a.cuts, cand.change)
+		a.Changes = append(a.Changes, cand.change)
 	}
 }
 

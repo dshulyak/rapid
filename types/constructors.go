@@ -63,3 +63,16 @@ func NewAcceptedMessage(ballot, seq uint64, value *Value) *Message {
 		},
 	}
 }
+
+func NewAlert(observer, subject uint64, change *Change) *Message {
+	return &Message{
+		From: observer,
+		Type: &Message_Alert{
+			Alert: &Alert{
+				Observer: observer,
+				Subject:  subject,
+				Change:   change,
+			},
+		},
+	}
+}

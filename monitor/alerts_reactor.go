@@ -4,20 +4,25 @@ import (
 	"context"
 	"time"
 
-	mtypes "github.com/dshulyak/rapid/monitor/types"
+	"github.com/dshulyak/rapid/network"
 	"github.com/dshulyak/rapid/types"
 	"go.uber.org/zap"
 )
 
-func NewAlertsReactor(logger *zap.SugaredLogger, period time.Duration, last *LastKG, alerts *Alerts) AlertsReactor {
+func NewAlertsReactor(logger *zap.SugaredLogger,
+	period time.Duration,
+	last *types.LastConfiguration,
+	bf network.BroadcastFacade,
+	alerts *Alerts,
+) AlertsReactor {
 	return AlertsReactor{
 		logger:   logger.Named("alerts reactor"),
 		period:   period,
 		last:     last,
 		alerts:   alerts,
-		incoming: make(chan *mtypes.Alert, 1),
+		bf:       bf,
+		observed: make(chan []*types.Message, 1),
 		changes:  make(chan []*types.Change, 1),
-		outgoing: make(chan []*mtypes.Alert, 1),
 	}
 }
 
@@ -25,70 +30,72 @@ type AlertsReactor struct {
 	logger *zap.SugaredLogger
 	period time.Duration
 
-	last   *LastKG
+	last   *types.LastConfiguration
 	alerts *Alerts
 
-	incoming chan *mtypes.Alert
+	bf network.BroadcastFacade
 
+	observed chan []*types.Message
 	changes  chan []*types.Change
-	outgoing chan []*mtypes.Alert
 }
 
-func (r AlertsReactor) Observe(ctx context.Context, alert *mtypes.Alert) error {
+func (r AlertsReactor) Observe(ctx context.Context, msgs []*types.Message) error {
 	select {
-	case r.incoming <- alert:
+	case r.observed <- msgs:
+		return nil
 	case <-ctx.Done():
 		return ctx.Err()
 	}
-	return nil
 }
 
 func (r AlertsReactor) Changes() <-chan []*types.Change {
 	return r.changes
 }
 
-func (r AlertsReactor) Alerts() <-chan []*mtypes.Alert {
-	return r.outgoing
-}
-
 func (r AlertsReactor) Run(ctx context.Context) error {
 	var (
-		ticker   = time.NewTicker(r.period)
-		changes  []*types.Change
-		outgoing []*mtypes.Alert
+		ticker = time.NewTicker(r.period)
 
-		outchan chan []*mtypes.Alert
-		chchan  chan []*types.Change
+		egress chan<- []*types.Message
+		chchan chan []*types.Change
 
-		graph, update = r.last.Last()
+		configuration, update = r.last.Last()
+		sub, err              = r.bf.Subscribe(ctx)
 	)
+	if err != nil {
+		return err
+	}
+	defer sub.Stop()
 	defer ticker.Stop()
 	for {
 		select {
 		case <-ticker.C:
 			r.alerts.Tick()
-			outgoing = append(outgoing, r.alerts.Pending()...)
 		case <-ctx.Done():
 			return ctx.Err()
-		case alert := <-r.incoming:
-			r.alerts.Observe(alert)
-			changes = append(changes, r.alerts.DetectedCut()...)
-			outgoing = append(outgoing, r.alerts.Pending()...)
-		case chchan <- changes:
+		case msgs := <-sub.Messages:
+			for _, msg := range msgs {
+				r.alerts.Observe(msg)
+			}
+		case msgs := <-r.observed:
+			for _, msg := range msgs {
+				r.alerts.Observe(msg)
+			}
+		case chchan <- r.alerts.Changes:
 			chchan = nil
-			changes = nil
-		case outchan <- outgoing:
-			outchan = nil
-			outgoing = nil
+			r.alerts.Changes = nil
+		case egress <- r.alerts.Messages:
+			egress = nil
+			r.alerts.Messages = nil
 		case <-update:
-			graph, update = r.last.Last()
-			r.alerts.Update(graph)
+			configuration, update = r.last.Last()
+			r.alerts.Update(configuration)
 		}
-		if len(changes) > 0 {
+		if len(r.alerts.Changes) > 0 {
 			chchan = r.changes
 		}
-		if len(outgoing) > 0 {
-			outchan = r.outgoing
+		if len(r.alerts.Messages) > 0 {
+			egress = r.bf.Egress()
 		}
 	}
 }

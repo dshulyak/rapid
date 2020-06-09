@@ -5,7 +5,8 @@ import (
 	"errors"
 	"sync"
 
-	mtypes "github.com/dshulyak/rapid/monitor/types"
+	"github.com/dshulyak/rapid/graph"
+	"github.com/dshulyak/rapid/network"
 	"github.com/dshulyak/rapid/types"
 	"go.uber.org/zap"
 )
@@ -14,12 +15,19 @@ type FailureDetector interface {
 	Monitor(context.Context, *types.Node) error
 }
 
-func NewMonitor(logger *zap.SugaredLogger, id uint64, last *LastKG, fd FailureDetector, am AlertsReactor) *Monitor {
+func NewMonitor(logger *zap.SugaredLogger,
+	id uint64,
+	last LastKG,
+	fd FailureDetector,
+	bf network.BroadcastFacade,
+	ar AlertsReactor,
+) *Monitor {
 	return &Monitor{
-		logger: logger.Named("monitor").With("node ID", id),
+		logger: logger.Named("monitor").With("node", id),
 		id:     id,
 		fd:     fd,
-		am:     am,
+		bf:     bf,
+		ar:     ar,
 		last:   last,
 	}
 }
@@ -28,8 +36,9 @@ type Monitor struct {
 	logger *zap.SugaredLogger
 	id     uint64
 	fd     FailureDetector
-	am     AlertsReactor
-	last   *LastKG
+	bf     network.BroadcastFacade
+	ar     AlertsReactor
+	last   LastKG
 }
 
 // Run monitors subjects from the KGraph.
@@ -40,23 +49,28 @@ func (m *Monitor) Run(ctx context.Context) error {
 	var (
 		group sync.WaitGroup
 		// fds is a map with cancellation functions
-		topology      = map[uint64]func(){}
-		graph, update = m.last.Last()
+		topology                     = map[uint64]func(){}
+		graph, configuration, update = m.last.Last()
 	)
-	m.change(ctx, &group, topology, graph)
+	m.change(ctx, &group, topology, graph, configuration)
 	defer group.Wait()
 	for {
 		select {
 		case <-ctx.Done():
 			return ctx.Err()
 		case <-update:
-			graph, update = m.last.Last()
-			m.change(ctx, &group, topology, graph)
+			graph, configuration, update = m.last.Last()
+			m.change(ctx, &group, topology, graph, configuration)
 		}
 	}
 }
 
-func (m *Monitor) change(ctx context.Context, group *sync.WaitGroup, topology map[uint64]func(), kg *KGraph) {
+func (m *Monitor) change(ctx context.Context,
+	group *sync.WaitGroup,
+	topology map[uint64]func(),
+	kg *graph.KGraph,
+	configuration *types.Configuration,
+) {
 	for id := range topology {
 		old := true
 		kg.IterateSubjects(m.id, func(n *types.Node) bool {
@@ -79,9 +93,10 @@ func (m *Monitor) change(ctx context.Context, group *sync.WaitGroup, topology ma
 		}
 		topology[node.ID] = cancel
 		group.Add(1)
+
 		go func(node *types.Node) {
 			defer group.Done()
-			logger := m.logger.With("node", node)
+			logger := m.logger.With("peer", node.ID)
 			logger.Debug("started failure detector instance")
 			err := m.fd.Monitor(ctx, node)
 			if err != nil {
@@ -90,14 +105,21 @@ func (m *Monitor) change(ctx context.Context, group *sync.WaitGroup, topology ma
 					return
 				}
 				logger.Info("detected failure")
-				_ = m.am.Observe(ctx, &mtypes.Alert{
-					Observer: m.id,
-					Subject:  node.ID,
-					Change: &types.Change{
-						Type: types.Change_REMOVE,
-						Node: node,
-					},
-				})
+
+				change := &types.Change{
+					Type: types.Change_REMOVE,
+					Node: node,
+				}
+				msg := types.NewAlert(m.id, node.ID, change)
+				msg = types.WithInstance(configuration.ID, msg)
+
+				if err := m.ar.Observe(ctx, []*types.Message{msg}); err != nil {
+					return
+				}
+				select {
+				case <-ctx.Done():
+				case m.bf.Egress() <- []*types.Message{msg}:
+				}
 			}
 		}(node)
 		return true

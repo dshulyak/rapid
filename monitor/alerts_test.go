@@ -3,54 +3,57 @@ package monitor_test
 import (
 	"testing"
 
+	"github.com/dshulyak/rapid/graph"
 	"github.com/dshulyak/rapid/monitor"
-	mtypes "github.com/dshulyak/rapid/monitor/types"
 	"github.com/dshulyak/rapid/types"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/zap"
 )
 
-func genNodes(n int) []*types.Node {
+func genConfiguration(n int) *types.Configuration {
 	nodes := make([]*types.Node, n)
 	for i := range nodes {
 		nodes[i] = &types.Node{
 			ID: uint64(i + 1),
 		}
 	}
-	return nodes
+	return &types.Configuration{Nodes: nodes}
 }
 
 func TestAlertsCutDetectedFromAllAlerts(t *testing.T) {
-	kg := monitor.NewKGraph(3, genNodes(4))
-	alerts := monitor.NewAlerts(zap.NewNop().Sugar(), kg, monitor.Config{
-		Node: &types.Node{ID: 1},
-		LW:   3,
-		HW:   6,
-	})
+	conf := genConfiguration(4)
+	kg := graph.New(3, conf.Nodes)
+	alerts := monitor.NewAlerts(zap.NewNop().Sugar(),
+		conf,
+		monitor.Config{
+			Node: &types.Node{ID: 1},
+			K:    3,
+			LW:   3,
+			HW:   6,
+		})
 	change := &types.Change{
 		Type: types.Change_REMOVE,
 		Node: &types.Node{ID: 2},
 	}
 	kg.IterateObservers(change.Node.ID, func(n *types.Node) bool {
-		alerts.Observe(&mtypes.Alert{
-			Observer: n.ID,
-			Subject:  change.Node.ID,
-			Change:   change,
-		})
+		alerts.Observe(types.NewAlert(n.ID, change.Node.ID, change))
 		return true
 	})
-	cut := alerts.DetectedCut()
+	cut := alerts.Changes
 	require.Len(t, cut, 1)
 	require.Equal(t, change, cut[0])
 }
 
 func TestAlertsUnstableBlocking(t *testing.T) {
-	kg := monitor.NewKGraph(8, genNodes(100))
-	alerts := monitor.NewAlerts(zap.NewNop().Sugar(), kg, monitor.Config{
-		Node: &types.Node{ID: 1},
-		LW:   1,
-		HW:   6,
-	})
+	conf := genConfiguration(100)
+	kg := graph.New(8, conf.Nodes)
+	alerts := monitor.NewAlerts(zap.NewNop().Sugar(),
+		conf, monitor.Config{
+			Node: &types.Node{ID: 1},
+			K:    8,
+			LW:   1,
+			HW:   6,
+		})
 	changeTWO := &types.Change{
 		Type: types.Change_REMOVE,
 		Node: &types.Node{ID: 2},
@@ -60,42 +63,33 @@ func TestAlertsUnstableBlocking(t *testing.T) {
 		Node: &types.Node{ID: 3},
 	}
 	kg.IterateObservers(changeTHREE.Node.ID, func(n *types.Node) bool {
-		alerts.Observe(&mtypes.Alert{
-			Observer: n.ID,
-			Subject:  changeTHREE.Node.ID,
-			Change:   changeTHREE,
-		})
+		alerts.Observe(types.NewAlert(n.ID, changeTHREE.Node.ID, changeTHREE))
 		return false
 	})
 	kg.IterateObservers(changeTWO.Node.ID, func(n *types.Node) bool {
-		alerts.Observe(&mtypes.Alert{
-			Observer: n.ID,
-			Subject:  changeTWO.Node.ID,
-			Change:   changeTWO,
-		})
+		alerts.Observe(types.NewAlert(n.ID, changeTWO.Node.ID, changeTWO))
 		return true
 	})
-	require.Len(t, alerts.DetectedCut(), 0)
+	require.Len(t, alerts.Changes, 0)
 	kg.IterateObservers(changeTHREE.Node.ID, func(n *types.Node) bool {
-		alerts.Observe(&mtypes.Alert{
-			Observer: n.ID,
-			Subject:  changeTHREE.Node.ID,
-			Change:   changeTHREE,
-		})
+		alerts.Observe(types.NewAlert(n.ID, changeTHREE.Node.ID, changeTHREE))
 		return true
 	})
-	cut := alerts.DetectedCut()
+	cut := alerts.Changes
 	require.Len(t, cut, 2)
 }
 
 func TestAlertsUnstableObserver(t *testing.T) {
-	kg := monitor.NewKGraph(8, genNodes(100))
 	hw := 8
-	alerts := monitor.NewAlerts(zap.NewNop().Sugar(), kg, monitor.Config{
-		Node: &types.Node{ID: 1},
-		LW:   1,
-		HW:   hw,
-	})
+	conf := genConfiguration(100)
+	kg := graph.New(8, conf.Nodes)
+	alerts := monitor.NewAlerts(zap.NewNop().Sugar(), conf,
+		monitor.Config{
+			Node: &types.Node{ID: 1},
+			K:    8,
+			LW:   1,
+			HW:   hw,
+		})
 	change := &types.Change{
 		Type: types.Change_REMOVE,
 		Node: &types.Node{ID: 2},
@@ -109,11 +103,7 @@ func TestAlertsUnstableObserver(t *testing.T) {
 			obsID = n.ID
 			return false
 		}
-		alerts.Observe(&mtypes.Alert{
-			Observer: n.ID,
-			Subject:  change.Node.ID,
-			Change:   change,
-		})
+		alerts.Observe(types.NewAlert(n.ID, change.Node.ID, change))
 		count++
 		return true
 	})
@@ -121,68 +111,20 @@ func TestAlertsUnstableObserver(t *testing.T) {
 		Type: types.Change_REMOVE,
 		Node: &types.Node{ID: obsID},
 	}
-	require.Len(t, alerts.DetectedCut(), 0)
+	require.Len(t, alerts.Changes, 0)
 	kg.IterateObservers(obsID, func(n *types.Node) bool {
-		alerts.Observe(&mtypes.Alert{
-			Observer: n.ID,
-			Subject:  obsID,
-			Change:   obsChange,
-		})
+		alerts.Observe(types.NewAlert(n.ID, obsID, obsChange))
 		return true
 	})
-	require.Len(t, alerts.DetectedCut(), 2)
-}
-
-func TestAlertsPendingRecordedAlerts(t *testing.T) {
-	kg := monitor.NewKGraph(8, genNodes(100))
-	alerts := monitor.NewAlerts(zap.NewNop().Sugar(), kg, monitor.Config{
-		Node: &types.Node{ID: 1},
-		LW:   1,
-		HW:   8,
-	})
-	alert := &mtypes.Alert{
-		Observer: 1,
-		Subject:  2,
-		Change: &types.Change{
-			Type: types.Change_REMOVE,
-			Node: &types.Node{ID: 2},
-		},
-	}
-	alerts.Observe(alert)
-	pending := alerts.Pending()
-	require.Len(t, pending, 1)
-	require.Equal(t, alert, pending[0])
-	require.Len(t, alerts.Pending(), 0)
-}
-
-func TestAlertsRetransmit(t *testing.T) {
-	kg := monitor.NewKGraph(8, genNodes(100))
-	alerts := monitor.NewAlerts(zap.NewNop().Sugar(), kg, monitor.Config{
-		Node:              &types.Node{ID: 1},
-		LW:                1,
-		HW:                8,
-		RetransmitTimeout: 1,
-	})
-	alert := &mtypes.Alert{
-		Observer: 1,
-		Subject:  2,
-		Change: &types.Change{
-			Type: types.Change_REMOVE,
-			Node: &types.Node{ID: 2},
-		},
-	}
-	alerts.Observe(alert)
-	require.Len(t, alerts.Pending(), 1)
-	alerts.Tick()
-	pending := alerts.Pending()
-	require.Len(t, pending, 1)
-	require.Equal(t, alert, pending[0])
+	require.Len(t, alerts.Changes, 2)
 }
 
 func TestAlertsReinforce(t *testing.T) {
-	kg := monitor.NewKGraph(8, genNodes(100))
-	alerts := monitor.NewAlerts(zap.NewNop().Sugar(), kg, monitor.Config{
+	conf := genConfiguration(100)
+	kg := graph.New(8, conf.Nodes)
+	alerts := monitor.NewAlerts(zap.NewNop().Sugar(), conf, monitor.Config{
 		Node:             &types.Node{ID: 1},
+		K:                8,
 		LW:               1,
 		HW:               8,
 		ReinforceTimeout: 1,
@@ -192,45 +134,40 @@ func TestAlertsReinforce(t *testing.T) {
 		subject = n.ID
 		return false
 	})
-	alert := &mtypes.Alert{
-		Observer: 10,
-		Subject:  subject,
-		Change: &types.Change{
-			Type: types.Change_REMOVE,
-			Node: &types.Node{ID: subject},
-		},
+	change := &types.Change{
+		Type: types.Change_REMOVE,
+		Node: &types.Node{ID: subject},
 	}
-	alerts.Observe(alert)
+	msg := types.NewAlert(10, subject, change)
+
+	alerts.Observe(msg)
 	alerts.Tick()
-	pending := alerts.Pending()
-	require.Len(t, pending, 2)
-	require.Equal(t, alert, pending[0])
-	require.Equal(t, 1, int(pending[1].Observer))
-	require.Equal(t, alert.Change, pending[1].Change)
+
+	require.Len(t, alerts.Messages, 1)
+	reinforced := alerts.Messages[0].GetAlert()
+	require.Equal(t, 1, int(reinforced.Observer))
+	require.Equal(t, change, reinforced.Change)
 }
 
 func TestJoinedNonexisting(t *testing.T) {
-	kg := monitor.NewKGraph(8, genNodes(100))
-	alerts := monitor.NewAlerts(zap.NewNop().Sugar(), kg, monitor.Config{
+	conf := genConfiguration(100)
+	kg := graph.New(8, conf.Nodes)
+	alerts := monitor.NewAlerts(zap.NewNop().Sugar(), conf, monitor.Config{
 		Node: &types.Node{ID: 1},
+		K:    8,
 		LW:   1,
 		HW:   8,
 	})
 
 	joiner := uint64(1000)
 	kg.IterateObservers(joiner, func(n *types.Node) bool {
-		alerts.Observe(&mtypes.Alert{
-			Observer: n.ID,
-			Subject:  joiner,
-			Change: &types.Change{
-				Type: types.Change_JOIN,
-				Node: &types.Node{ID: joiner},
-			},
-		})
+		alerts.Observe(types.NewAlert(n.ID, joiner, &types.Change{
+			Type: types.Change_JOIN,
+			Node: &types.Node{ID: joiner},
+		}))
 		return true
 	})
 
-	changes := alerts.DetectedCut()
+	changes := alerts.Changes
 	require.Len(t, changes, 1)
-	require.Equal(t, joiner, changes[0].Node.ID)
 }
