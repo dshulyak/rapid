@@ -23,6 +23,7 @@ func (bf BroadcastFacade) Subscribe(ctx context.Context) (*Subscription, error) 
 	return bf.mx.Subscribe(ctx)
 }
 
+// Egress is for messages that are sent by this node into the network.
 func (bf BroadcastFacade) Egress() chan<- []*types.Message {
 	return bf.rb.Egress()
 }

@@ -50,6 +50,12 @@ func NewReliableBroadcast(logger *zap.SugaredLogger,
 	return rb
 }
 
+// ReliableBroadcast guarantees that any sequnece of messages will
+// be delivered atleast once and in order.
+// Until peer is suspected by failure detector broadcaster will buffer
+// and transmit message periodically.
+// Once an ack received and message are in peer memory it is safe to stop.
+// If peer crashes - it is peer responsbility to get missing data.
 type ReliableBroadcast struct {
 	conf Config
 

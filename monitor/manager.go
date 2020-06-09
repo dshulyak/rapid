@@ -2,89 +2,39 @@ package monitor
 
 import (
 	"context"
-	"errors"
-	"sync/atomic"
 
-	mtypes "github.com/dshulyak/rapid/monitor/types"
+	"github.com/dshulyak/rapid/network"
 	"github.com/dshulyak/rapid/types"
 	"go.uber.org/zap"
 	"golang.org/x/sync/errgroup"
 )
 
-var (
-	ErrOutdatedConfigID = errors.New("outdated configuration")
-)
-
-type NetworkHandler struct {
-	logger *zap.SugaredLogger
-	id     uint64
-
-	configID uint64
-
-	alerts AlertsReactor
-}
-
-func (net *NetworkHandler) Join(ctx context.Context, configID uint64, node *types.Node) error {
-	local := atomic.LoadUint64(&net.configID)
-	if local != configID {
-		net.logger.With(
-			"node", node,
-			"node config", configID,
-			"local", local,
-		).Debug("outdated configuration")
-		return ErrOutdatedConfigID
-	}
-	return net.alerts.Observe(ctx, &mtypes.Alert{
-		Observer: net.id,
-		Subject:  node.ID,
-		Change: &types.Change{
-			Type: types.Change_JOIN,
-			Node: node,
-		},
-	})
-}
-
-func (net *NetworkHandler) Broadcast(ctx context.Context, alerts []*mtypes.Alert) error {
-	for _, alerts := range alerts {
-		if err := net.alerts.Observe(ctx, alerts); err != nil {
-			return err
-		}
-	}
-	return nil
-}
-
-func (net *NetworkHandler) UpdateConfigID(id uint64) {
-	atomic.StoreUint64(&net.configID, id)
-}
-
-type NetworkService interface {
-	Register(*NetworkHandler)
-
-	Broadcast(context.Context, *LastKG, <-chan []*mtypes.Alert) error
-
-	Join(ctx context.Context, configID uint64, observer, subject *types.Node) error
-}
-
-func NewManager(logger *zap.SugaredLogger, conf Config, cluster *types.Configuration, fd FailureDetector, netsvc NetworkService) *Manager {
-	kg := NewKGraph(conf.K, cluster.Nodes)
-	last := NewLastKG(kg)
-	am := NewAlertsReactor(logger, conf.TimeoutPeriod, last, NewAlerts(logger, kg, conf))
-	mon := NewMonitor(logger, conf.Node.ID, last, fd, am)
-	handler := &NetworkHandler{
-		logger: logger.Named("monitor network"),
-		id:     conf.Node.ID,
-		alerts: am,
-	}
-	netsvc.Register(handler)
+func NewManager(logger *zap.SugaredLogger,
+	conf Config,
+	configuration *types.LastConfiguration,
+	fd FailureDetector,
+	bf network.BroadcastFacade,
+) *Manager {
+	ar := NewAlertsReactor(
+		logger,
+		conf.TimeoutPeriod,
+		configuration,
+		bf,
+		NewAlerts(logger, configuration.Configuration(), conf),
+	)
+	mon := NewMonitor(logger,
+		conf.Node.ID,
+		LastKG{kparam: conf.K, conf: configuration},
+		fd,
+		bf,
+		ar,
+	)
 	return &Manager{
-		logger:   logger.Named("monitor"),
-		conf:     conf,
-		mon:      mon,
-		alerts:   am,
-		handler:  handler,
-		network:  netsvc,
-		configID: cluster.ID,
-		last:     last,
+		logger:  logger.Named("monitor"),
+		conf:    conf,
+		mon:     mon,
+		reactor: ar,
+		bf:      bf,
 	}
 }
 
@@ -92,60 +42,24 @@ type Manager struct {
 	logger *zap.SugaredLogger
 	conf   Config
 
-	last     *LastKG
-	configID uint64
-
-	mon *Monitor
-
-	alerts AlertsReactor
-
-	handler *NetworkHandler
-	network NetworkService
+	mon     *Monitor
+	reactor AlertsReactor
+	bf      network.BroadcastFacade
 }
 
 func (m *Manager) Run(ctx context.Context) error {
 	group, ctx := errgroup.WithContext(ctx)
 	group.Go(func() error {
-		defer m.logger.Info("closed alerts reactor")
-		return m.alerts.Run(ctx)
+		defer m.logger.Info("alerts reactor is stopped")
+		return m.reactor.Run(ctx)
 	})
 	group.Go(func() error {
-		defer m.logger.Info("closed broadcaster")
-		return m.network.Broadcast(ctx, m.last, m.alerts.Alerts())
-	})
-	group.Go(func() error {
-		defer m.logger.Info("closed monitoring extension")
+		defer m.logger.Info("monitoring is stopped")
 		return m.mon.Run(ctx)
 	})
 	return group.Wait()
 }
 
 func (m *Manager) Changes() <-chan []*types.Change {
-	return m.alerts.Changes()
-}
-
-func (m *Manager) Update(cluster *types.Configuration) {
-	m.logger.With("ID", cluster.ID).Debug("updating monitoring")
-	kg := NewKGraph(m.conf.K, cluster.Nodes)
-	m.last.Update(kg)
-	m.handler.UpdateConfigID(cluster.ID)
-	m.configID = cluster.ID
-	m.logger.With("ID", cluster.ID).Debug("finished update")
-}
-
-func (m *Manager) Join(ctx context.Context) (err error) {
-	sent := map[uint64]struct{}{}
-	m.last.Graph().IterateObservers(m.conf.Node.ID, func(n *types.Node) bool {
-		// supress notification on duplicate edges
-		if _, exist := sent[n.ID]; exist {
-			return true
-		}
-		sent[n.ID] = struct{}{}
-		err = m.network.Join(ctx, m.configID, n, m.conf.Node)
-		if err != nil {
-			return false
-		}
-		return true
-	})
-	return err
+	return m.reactor.Changes()
 }
