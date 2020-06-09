@@ -122,7 +122,13 @@ func (p *Paxos) Propose(value *types.Value) {
 	if p.proposed {
 		p.logger.With(
 			"ballot", p.ballot,
-		).Debug("already voted in this ballot")
+		).Debug("already proposed in this instance")
+		return
+	}
+	if p.ballot > 0 {
+		p.logger.With(
+			"ballot", p.ballot,
+		).Debug("can't propose")
 		return
 	}
 	p.ticks = p.conf.Timeout
@@ -226,7 +232,6 @@ func (p *Paxos) Step(msg *types.Message) {
 func (p *Paxos) stepPrepare(msg *types.Message) {
 	prepare := msg.GetPrepare()
 	if prepare.Ballot <= p.ballot {
-		// return only a ballot for the sender to update himself
 		p.logger.Debug("old ballot")
 		return
 	}
@@ -256,8 +261,9 @@ func (p *Paxos) stepPrepare(msg *types.Message) {
 func (p *Paxos) stepPromise(msg *types.Message) {
 	promise := msg.GetPromise()
 	if promise.Ballot > p.ballot {
-		p.logger.Debug("received newer ballot in promise.")
+		p.logger.Debug("newer ballot in promise")
 		p.ballot = promise.Ballot
+		p.renewTimeout()
 		return
 	} else if promise.Ballot < p.ballot {
 		return
@@ -299,6 +305,7 @@ func (p *Paxos) stepAccepted(msg *types.Message) {
 	accepted := msg.GetAccepted()
 	if accepted.Ballot > p.ballot {
 		p.ballot = accepted.Ballot
+		p.renewTimeout()
 	}
 	if _, exist := p.accepted[accepted.Ballot]; !exist {
 		p.accepted[accepted.Ballot] = newAggregate(p.classicQuorum, p.safetyQuorum)
