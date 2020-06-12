@@ -47,7 +47,6 @@ message Prepare {
 
 message Value {
   repeated Change changes = 1;
-  repeated Node nodes = 2;
 }
 
 message Promise {

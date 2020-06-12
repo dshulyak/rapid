@@ -30,15 +30,16 @@ func getClassicQuorum(lth int) int {
 func NewPaxos(logger *zap.SugaredLogger, conf Config) *Paxos {
 	logger = logger.Named("paxos")
 	n := len(conf.Configuration.Nodes)
-	replicas := map[uint64]struct{}{}
+	replicas := map[uint64]*types.Node{}
 	for _, node := range conf.Configuration.Nodes {
-		replicas[node.ID] = struct{}{}
+		replicas[node.ID] = node
 	}
 	classic := getClassicQuorum(n)
 	fast := getFastQuorum(n)
 	safety := getSafety(n)
-	accepted := map[uint64]*aggregate{}
-	accepted[0] = newAggregate(fast, safety)
+	accepted := map[uint64]*aggregate{
+		0: newAggregate(fast, safety),
+	}
 	return &Paxos{
 		conf:          conf,
 		replicaID:     conf.Node.ID,
@@ -62,7 +63,7 @@ type Paxos struct {
 	conf Config
 
 	replicaID uint64
-	replicas  map[uint64]struct{}
+	replicas  map[uint64]*types.Node
 
 	// instanceID and classic/fast quorums must be updated after each configuration commit.
 	instanceID                              uint64
@@ -90,8 +91,7 @@ type Paxos struct {
 
 	// messages are consumed by paxos reactor and will be sent over the network
 	Messages []*types.Message
-	// values meant to be consumed by state machine application.
-	Values []*types.LearnedValue
+	Update   *types.Configuration
 }
 
 // instantiate ticks once value was proposed
@@ -148,28 +148,39 @@ func (p *Paxos) Propose(value *types.Value) {
 
 // TODO we can commit only one value per paxos instance
 func (p *Paxos) commit(v *types.LearnedValue) {
-	p.Values = append(p.Values, v)
 	p.log.commit(v)
 
-	p.classicQuorum = getClassicQuorum(len(v.Value.Nodes))
-	p.fastQuorum = getFastQuorum(len(v.Value.Nodes))
-	p.accepted = map[uint64]*aggregate{
-		0: newAggregate(p.fastQuorum, p.safetyQuorum),
-	}
 	p.promised = newAggregate(p.classicQuorum, p.safetyQuorum)
 	p.proposed = false
-	p.replicas = map[uint64]struct{}{}
-	for _, node := range v.Value.Nodes {
-		p.replicas[node.ID] = struct{}{}
-	}
 	p.instanceID = v.Sequence
 	p.ballot = 0
 	p.ticks = -1
 
+	for _, change := range v.Value.Changes {
+		if change.Type == types.Change_JOIN {
+			p.replicas[change.Node.ID] = change.Node
+		} else if change.Type == types.Change_REMOVE {
+			delete(p.replicas, change.Node.ID)
+		}
+	}
+	p.Update = &types.Configuration{
+		ID:    p.instanceID,
+		Nodes: make([]*types.Node, 0, len(p.replicas)),
+	}
+	for _, node := range p.replicas {
+		p.Update.Nodes = append(p.Update.Nodes, node)
+	}
+
+	p.classicQuorum = getClassicQuorum(len(p.Update.Nodes))
+	p.fastQuorum = getFastQuorum(len(p.Update.Nodes))
+	p.accepted = map[uint64]*aggregate{
+		0: newAggregate(p.fastQuorum, p.safetyQuorum),
+	}
+
 	p.logger.With(
-		"sequence", v.Sequence,
-		"classic", p.classicQuorum,
-		"fast", p.fastQuorum,
+		"instance", p.instanceID,
+		"classic quorum", p.classicQuorum,
+		"fast quorum", p.fastQuorum,
 	).Info("updated configuration")
 }
 

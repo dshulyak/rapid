@@ -3,24 +3,17 @@ package consensus_test
 import (
 	"context"
 	"errors"
+	"sort"
 	"testing"
 	"time"
 
 	"github.com/dshulyak/rapid/network/inproc"
 	"github.com/dshulyak/rapid/types"
 	"github.com/stretchr/testify/require"
+	"gotest.tools/assert"
 )
 
 var errTimedOut = errors.New("test timed out")
-
-// consistent tests that all values are equal to the same value from the slice with expected values.
-func consistent(t *testing.T, cluster *Cluster, expected []*types.Value, total int) error {
-	t.Helper()
-	cluster.Iterate(func(id uint64) bool {
-		return true
-	})
-	return nil
-}
 
 func verifyUpdated(t *testing.T,
 	cluster *Cluster,
@@ -45,9 +38,17 @@ func verifyUpdated(t *testing.T,
 		}
 	}
 	for _, proposal := range proposals {
+		sort.Slice(proposal, func(i, j int) bool {
+			return proposal[i].ID < proposal[j].ID
+		})
 		for _, n := range nodes {
 			configuration := cluster.Last(n.ID).Configuration()
-			require.Equal(t, configuration.Nodes, proposal)
+			sort.Slice(configuration.Nodes, func(i, j int) bool {
+				return configuration.Nodes[i].ID < configuration.Nodes[j].ID
+			})
+			for i := range proposal {
+				assert.Equal(t, proposal[i], configuration.Nodes[i])
+			}
 		}
 	}
 }
@@ -66,15 +67,11 @@ func TestReactorProposeSameValue(t *testing.T) {
 			Node: added,
 		},
 	}
-	proposed := &types.Value{
-		Nodes:   append(cluster.Nodes(), added),
-		Changes: changes,
-	}
 	for i := 0; i < 2; i++ {
 		added.ID++
 		verifyUpdated(t, cluster, func() {
-			require.NoError(t, cluster.Propose(ctx, proposed))
-		}, cluster.Nodes(), 10*time.Second, proposed.Nodes)
+			require.NoError(t, cluster.Propose(ctx, &types.Value{Changes: changes}))
+		}, cluster.Nodes(), 10*time.Second, append(cluster.Nodes(), added))
 	}
 }
 
@@ -93,12 +90,11 @@ func TestReactorReachConsensusWithTwoNodes(t *testing.T) {
 		},
 	}
 	proposed := &types.Value{
-		Nodes:   append(cluster.Nodes(), added),
 		Changes: changes,
 	}
 	verifyUpdated(t, cluster, func() {
 		require.NoError(t, cluster.Propose(ctx, proposed))
-	}, cluster.Nodes(), 10*time.Second, proposed.Nodes)
+	}, cluster.Nodes(), 10*time.Second, append(cluster.Nodes(), added))
 }
 
 func TestReactorDowngrade(t *testing.T) {
@@ -114,7 +110,6 @@ func TestReactorDowngrade(t *testing.T) {
 		copy(nodes, cluster.Nodes())
 		nodes = append(nodes, node)
 		upgrade := &types.Value{
-			Nodes: nodes,
 			Changes: []*types.Change{
 				{
 					Type: types.Change_JOIN,
@@ -125,10 +120,9 @@ func TestReactorDowngrade(t *testing.T) {
 
 		verifyUpdated(t, cluster, func() {
 			require.NoError(t, cluster.Propose(ctx, upgrade))
-		}, cluster.Nodes(), 10*time.Second, upgrade.Nodes)
+		}, cluster.Nodes(), 10*time.Second, nodes)
 
 		downgrade := &types.Value{
-			Nodes: cluster.Nodes(),
 			Changes: []*types.Change{
 				{
 					Type: types.Change_REMOVE,
@@ -138,7 +132,7 @@ func TestReactorDowngrade(t *testing.T) {
 
 		verifyUpdated(t, cluster, func() {
 			require.NoError(t, cluster.Propose(ctx, downgrade))
-		}, cluster.Nodes(), 10*time.Second, downgrade.Nodes)
+		}, cluster.Nodes(), 10*time.Second, cluster.Nodes())
 	}
 }
 
@@ -166,7 +160,6 @@ func TestReactorProgressWithMajority(t *testing.T) {
 
 	node := &types.Node{ID: 777}
 	upgrade := &types.Value{
-		Nodes: append(cluster.Nodes(), node),
 		Changes: []*types.Change{
 			{
 				Type: types.Change_JOIN,
@@ -176,5 +169,5 @@ func TestReactorProgressWithMajority(t *testing.T) {
 	}
 	verifyUpdated(t, cluster, func() {
 		require.NoError(t, cluster.Propose(ctx, upgrade))
-	}, nodes[2:], 10*time.Second, upgrade.Nodes)
+	}, nodes[2:], 10*time.Second, cluster.Nodes())
 }
