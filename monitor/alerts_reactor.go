@@ -72,6 +72,7 @@ func (r AlertsReactor) Run(ctx context.Context) error {
 		case <-ticker.C:
 			r.alerts.Tick()
 		case <-ctx.Done():
+			close(r.changes)
 			return ctx.Err()
 		case msgs := <-sub.Messages:
 			for _, msg := range msgs {

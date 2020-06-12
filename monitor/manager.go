@@ -63,3 +63,7 @@ func (m *Manager) Run(ctx context.Context) error {
 func (m *Manager) Changes() <-chan []*types.Change {
 	return m.reactor.Changes()
 }
+
+func (m *Manager) Observe(ctx context.Context, msgs []*types.Message) error {
+	return m.reactor.Observe(ctx, msgs)
+}

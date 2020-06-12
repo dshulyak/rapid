@@ -6,8 +6,6 @@ import (
 	"net"
 	"time"
 
-	"github.com/dshulyak/rapid/bootstrap"
-	bgrpc "github.com/dshulyak/rapid/bootstrap/network/grpc"
 	"github.com/dshulyak/rapid/types"
 
 	"go.uber.org/zap"
@@ -36,14 +34,6 @@ type GRPCNetwork struct {
 	dialTimeout, sendTimeout time.Duration
 
 	srv *grpc.Server
-}
-
-func (n GRPCNetwork) BootstrapServer() bootstrap.NetworkServer {
-	return bgrpc.NewService(n.srv)
-}
-
-func (n GRPCNetwork) BootstrapClient() bootstrap.NetworkClient {
-	return bgrpc.NewClient(n.dialTimeout, n.sendTimeout)
 }
 
 func (n GRPCNetwork) Listen(ctx context.Context, node *types.Node) error {

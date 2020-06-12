@@ -2,16 +2,16 @@ package rapid
 
 import (
 	"context"
-	"crypto/sha256"
-	"encoding/hex"
 	"encoding/json"
 	"math/rand"
+	"sort"
 	"time"
 
 	"github.com/dshulyak/rapid/bootstrap"
 	"github.com/dshulyak/rapid/consensus"
-	ctypes "github.com/dshulyak/rapid/consensus/types"
+	"github.com/dshulyak/rapid/graph"
 	"github.com/dshulyak/rapid/monitor"
+	"github.com/dshulyak/rapid/network"
 	"github.com/dshulyak/rapid/network/grpc"
 	"github.com/dshulyak/rapid/types"
 
@@ -39,23 +39,19 @@ func (d *StringDuration) UnmarshalJSON(b []byte) error {
 }
 
 type Config struct {
-	// Expected network delay used for ticks
+	// Expected network delay. Used as a unit for ticks.
 	NetworkDelay StringDuration
 
 	// Paxos
 
-	// Timeouts are expressed in number of network delays.
-	// ElectionTimeout if replica doesn't receive hearbeat for ElectionTimeout ticks
-	// it will start new election, by sending Prepare to other replicas.
-	ElectionTimeout int
+	// Timeout after value was proposed, replica will wait for Timeout
+	// before executing fallback with classic paxos
+	Timeout int
 
 	// Monitoring
 
-	// Timeouts are expressed in number of network delays.
 	// Each observer for the same subject must reinforce other observer vote after reinforce timeout.
 	ReinforceTimeout int
-	// RetransmitTimeout used to re-broadcast observed alerts.
-	RetransmitTimeout int
 
 	// Connectivity is a K paramter, used for monitoring topology construction.
 	// Each node will have K observers and K subjects.
@@ -63,19 +59,24 @@ type Config struct {
 	LowWatermark  int
 	HighWatermark int
 
+	// Network
+	BroadcastFanout          int
+	RetryPeriod              StringDuration
+	DialTimeout, SendTimeout StringDuration
+
+	// Bootstrap
+	JoinTries   int
+	JoinTimeout StringDuration
+
 	Seed *types.Node
 
 	IP   string
 	Port uint64
-
-	DialTimeout, SendTimeout StringDuration
 }
 
 type Network interface {
-	BootstrapServer() bootstrap.NetworkServer
-	BootstrapClient() bootstrap.NetworkClient
-	ConsensusNetworkService(configuration *types.Configuration) consensus.NetworkService
-	MonitorNetworkService(configuration *types.Configuration, node *types.Node) monitor.NetworkService
+	network.Network
+	bootstrap.Network
 	Listen(ctx context.Context, node *types.Node) error
 }
 
@@ -94,7 +95,8 @@ func New(
 			time.Duration(conf.DialTimeout),
 			time.Duration(conf.SendTimeout),
 		),
-		rng: rand.New(rand.NewSource(time.Now().Unix())),
+		rng:  rand.New(rand.NewSource(time.Now().Unix())),
+		last: types.Last(nil),
 	}
 }
 
@@ -105,9 +107,11 @@ type Rapid struct {
 	fd      monitor.FailureDetector
 	network Network
 	rng     *rand.Rand
+
+	last *types.LastConfiguration
 }
 
-func (r Rapid) Run(ctx context.Context, updates chan<- *types.Configuration) error {
+func (r Rapid) Run(ctx context.Context) error {
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
 	group, ctx := errgroup.WithContext(ctx)
@@ -127,14 +131,15 @@ func (r Rapid) Run(ctx context.Context, updates chan<- *types.Configuration) err
 	var (
 		configuration *types.Configuration
 		err           error
-		bootClient    = r.bootstrapClient()
 	)
 
 	if !seed {
-		configuration, err = bootClient.Join(ctx)
-		if err != nil {
-			r.logger.With("error", err).Error("requesting configuration from seed failed")
-			return err
+		for i := 0; i < r.conf.JoinTries; i++ {
+			configuration, err = r.join(ctx, node)
+			if err != nil {
+				return err
+			}
+			break
 		}
 	} else {
 		configuration = &types.Configuration{
@@ -142,167 +147,140 @@ func (r Rapid) Run(ctx context.Context, updates chan<- *types.Configuration) err
 		}
 	}
 
-	r.logger.With(
-		"configuration", configuration,
-	).Debug("received configuration from seed nodes")
+	r.last.Update(configuration)
+	r.logger.Info("starting the cluster")
+	broadcaster := network.NewBroadcastFacade(
+		network.NewReliableBroadcast(
+			r.logger,
+			r.network,
+			r.last,
+			network.Config{
+				NodeID:      node.ID,
+				Fanout:      r.conf.BroadcastFanout,
+				DialTimeout: time.Duration(r.conf.DialTimeout),
+				SendTimeout: time.Duration(r.conf.SendTimeout),
+				RetryPeriod: time.Duration(r.conf.RetryPeriod),
+			},
+		),
+	)
 
 	mon := monitor.NewManager(
 		r.logger,
 		monitor.Config{
-			Node:              node,
-			K:                 r.conf.Connectivity,
-			LW:                r.conf.LowWatermark,
-			HW:                r.conf.HighWatermark,
-			TimeoutPeriod:     time.Duration(r.conf.NetworkDelay),
-			ReinforceTimeout:  r.conf.ReinforceTimeout,
-			RetransmitTimeout: r.conf.RetransmitTimeout,
+			Node:             node,
+			K:                r.conf.Connectivity,
+			LW:               r.conf.LowWatermark,
+			HW:               r.conf.HighWatermark,
+			TimeoutPeriod:    time.Duration(r.conf.NetworkDelay),
+			ReinforceTimeout: r.conf.ReinforceTimeout,
 		},
-		configuration,
+		r.last,
 		r.fd,
-		r.network.MonitorNetworkService(configuration, node),
+		broadcaster,
 	)
 
-	if !seed {
-		r.logger.With("node", node).Debug("joining cluster")
-		if err := mon.Join(ctx); err != nil {
-			r.logger.With("error", err).Error("step 2 join failed")
-			return err
-		}
-
-		configuration, err = r.waitJoined(ctx, bootClient, node)
-		if err != nil {
-			return err
-		}
-		r.logger.With("configuration", configuration, "node", node).Info("node joined the cluster")
-	}
-
-	mon.Update(configuration)
-
-	group.Go(func() error {
-		return r.network.Listen(ctx, node)
-	})
-
-	group.Go(func() error {
-		return mon.Run(ctx)
-	})
-
-	cons := consensus.NewManager(
+	tick := time.Duration(r.conf.NetworkDelay) + time.Duration(r.rng.Int63n(int64(r.conf.NetworkDelay)/2))
+	cons := consensus.NewReactor(
 		r.logger,
-		r.network.ConsensusNetworkService(configuration),
-		consensus.Config{
+		broadcaster,
+		r.last,
+		consensus.NewPaxos(r.logger, consensus.Config{
 			Node:          node,
 			Configuration: configuration,
-			Timeout:       r.conf.ElectionTimeout,
-		},
-		time.Duration(r.conf.NetworkDelay)+time.Duration(r.rng.Int63n(int64(r.conf.NetworkDelay)/2)),
+			Timeout:       r.conf.Timeout,
+		}),
+		tick,
 	)
 
+	// New registers service in the network
+	// maybe API is a bit confusing
+	_ = bootstrap.New(r.logger, node.ID, r.last, r.network, mon, broadcaster)
+
 	group.Go(func() error {
+		defer r.logger.Info("network listener exited")
+		return r.network.Listen(ctx, node)
+	})
+	group.Go(func() error {
+		defer r.logger.Info("broadcaster exited")
+		return broadcaster.Run(ctx)
+	})
+	group.Go(func() error {
+		defer r.logger.Info("monitoring overlay exited")
+		return mon.Run(ctx)
+	})
+	group.Go(func() error {
+		defer r.logger.Info("consensus engine exited")
 		return cons.Run(ctx)
 	})
-
-	boot := bootstrap.NewService(r.logger, configuration, r.network.BootstrapServer())
-
-	values := make(chan []*ctypes.LearnedValue, 1)
-	cons.Subscribe(ctx, values)
-
+	// TODO pass channel for proposals directly to alerts reactor
+	// changeset must be sorted before posting to that channel
 	group.Go(func() error {
-		mapping := map[uint64]*types.Node{}
-		for _, node := range configuration.Nodes {
-			mapping[node.ID] = node
-		}
-		for {
-			select {
-			case vals := <-values:
-				for _, v := range vals {
-					update := &types.Configuration{
-						Nodes: v.Value.Nodes,
-						ID:    v.Sequence,
-					}
-					mon.Update(update)
-					boot.Update(update)
-					select {
-					case updates <- update:
-					case <-ctx.Done():
-						return ctx.Err()
-					}
-				}
-			case changes := <-mon.Changes():
-				for _, change := range changes {
-					switch change.Type {
-					case types.Change_JOIN:
-						mapping[change.Node.ID] = change.Node
-					case types.Change_REMOVE:
-						delete(mapping, change.Node.ID)
-					}
-				}
-				nodes := make([]*types.Node, 0, len(mapping))
-				for _, n := range mapping {
-					nodes = append(nodes, n)
-				}
-
-				changeset := &types.Changes{List: changes}
-
-				bytes, err := changeset.Marshal()
-				if err != nil {
-					r.logger.With(
-						"error", err,
-						"changeset", changeset,
-					).Error("failed to marshal changeset")
-					return err
-				}
-				sum := sha256.Sum256(bytes)
-
-				r.logger.With(
-					"id", hex.EncodeToString(sum[:]),
-					"changes", changes,
-				).Info("proposing changeset")
-
-				if err := cons.Propose(ctx, &ctypes.Value{
-					Id:      sum[:],
-					Nodes:   nodes,
-					Changes: changeset,
-				}); err != nil {
-					r.logger.With("error", err).Error("failed to propose")
-					return err
-				}
-			case <-ctx.Done():
-				return ctx.Err()
+		for changeset := range mon.Changes() {
+			// equality depends on the order
+			sort.Slice(changeset, func(i, j int) bool {
+				return changeset[i].Node.ID < changeset[j].Node.ID
+			})
+			if err := cons.Propose(ctx, &types.Value{Changes: changeset}); err != nil {
+				return err
 			}
 		}
+		return nil
 	})
 
 	return group.Wait()
 }
 
-func (r Rapid) waitJoined(ctx context.Context, bclient bootstrap.Client, node *types.Node) (*types.Configuration, error) {
-	ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
+func (r Rapid) join(ctx context.Context, node *types.Node) (*types.Configuration, error) {
+	client := bootstrap.NewClient(r.logger, r.network)
+	configuration, err := client.GetConfiguration(ctx, []*types.Node{r.conf.Seed})
+	if err != nil {
+		r.logger.With("error", err).Error("requesting configuration from seed failed")
+		return nil, err
+	}
+	r.logger.With(
+		"configuration", configuration,
+	).Info("got configuration from seeds")
+
+	graph := graph.New(r.conf.Connectivity, configuration.Nodes)
+	observers := []*types.Node{}
+	group, gctx := errgroup.WithContext(ctx)
+	graph.IterateObservers(node.ID, func(peer *types.Node) bool {
+		peer = peer
+		observers = append(observers, peer)
+		group.Go(func() error {
+			return client.Join(gctx, configuration.ID, node, peer)
+		})
+		return true
+	})
+	if err := group.Wait(); err != nil {
+		return nil, err
+	}
+	r.logger.Info("requested to join cluster")
+
+	ctx, cancel := context.WithTimeout(ctx, time.Duration(r.conf.JoinTimeout))
 	defer cancel()
-	ticker := time.NewTicker(2 * time.Second)
+	ticker := time.NewTicker(500 * time.Millisecond)
 	defer ticker.Stop()
 	for {
 		select {
 		case <-ctx.Done():
 			return nil, ctx.Err()
 		case <-ticker.C:
-			configuration, err := bclient.Join(ctx)
-			if err == nil {
-				for _, other := range configuration.Nodes {
-					if Compare(node, other) {
-						return configuration, nil
-					}
+			configuration, err = client.GetConfiguration(ctx, observers)
+			if err != nil {
+				continue
+			}
+			for _, other := range configuration.Nodes {
+				if node.ID == other.ID && Compare(node, other) {
+					return configuration, nil
 				}
 			}
 		}
 	}
 }
 
-func (r Rapid) bootstrapClient() bootstrap.Client {
-	return bootstrap.NewClient(
-		r.logger,
-		r.conf.Seed,
-		r.network.BootstrapClient(),
-	)
+func (r Rapid) Configuration() (*types.Configuration, <-chan struct{}) {
+	return r.last.Last()
 }
 
 func Compare(a, b *types.Node) bool {
