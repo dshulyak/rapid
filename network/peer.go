@@ -109,7 +109,7 @@ func (c peer) sendLoop(ctx context.Context, requests chan sendRequest) error {
 			conn, err = c.net.BroadcasterClient(ctx, c.node)
 			if err != nil {
 				conn = nil // just in case
-				c.logger.With("error", err).Error("dial failed")
+				c.logger.With("error", err).Debug("dial failed")
 				req.error <- err
 				continue
 			}
@@ -123,7 +123,7 @@ func (c peer) sendLoop(ctx context.Context, requests chan sendRequest) error {
 		}
 		err = conn.Send(ctx, req.msgs)
 		if err != nil {
-			c.logger.With("error", err).Error("send failed")
+			c.logger.With("error", err).Debug("send failed")
 			req.error <- err
 			continue
 		}

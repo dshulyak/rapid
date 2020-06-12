@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"fmt"
 	"io/ioutil"
 	"math/rand"
 	"os"
@@ -16,7 +15,6 @@ import (
 
 	"github.com/dshulyak/rapid"
 	"github.com/dshulyak/rapid/monitor/prober"
-	"github.com/dshulyak/rapid/types"
 	"github.com/spf13/pflag"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
@@ -25,8 +23,8 @@ import (
 
 var (
 	config    = pflag.StringP("configuration", "c", "example/rapid.json", "JSON file with configuration.")
-	ip        = pflag.String("ip", "0.0.0.0", "")
-	port      = pflag.Uint64("port", 4001, "")
+	ip        = pflag.StringP("ip", "i", "0.0.0.0", "")
+	port      = pflag.Uint64P("port", "p", 4001, "")
 	verbosity = pflag.Int8P("verbosity", "v", -1, "logger verbosity")
 )
 
@@ -64,7 +62,6 @@ func main() {
 
 	fd := prober.New(logger.Sugar(), 2*time.Second, 2*time.Second, 3)
 
-	updates := make(chan *types.Configuration, 1)
 	signals := make(chan os.Signal, 1)
 	signal.Notify(signals, syscall.SIGINT)
 
@@ -77,21 +74,29 @@ func main() {
 		case <-signals:
 		}
 		cancel()
-		return errors.New("interrupted")
+		return context.Canceled
 	})
+	instance := rapid.New(logger, conf, fd)
 	group.Go(func() error {
-		return rapid.New(logger, conf, fd).Run(ctx, updates)
+		return instance.Run(ctx)
 	})
 	group.Go(func() error {
 		<-ctx.Done()
-		close(updates)
 		return nil
 	})
-	for update := range updates {
-		logger.Sugar().With("configuration", update).Info("UPDATE")
+
+	configuration, update := instance.Configuration()
+	for {
+		select {
+		case <-ctx.Done():
+			if err := group.Wait(); err != nil && !errors.Is(err, context.Canceled) {
+				must(err)
+			}
+			logger.Sugar().Info("rapid service stopped")
+			return
+		case <-update:
+			configuration, update = instance.Configuration()
+			logger.Sugar().With("configuration", configuration).Info("UPDATE")
+		}
 	}
-	if err := group.Wait(); err != nil && errors.Is(err, context.Canceled) {
-		must(err)
-	}
-	fmt.Println("rapid service stopped")
 }

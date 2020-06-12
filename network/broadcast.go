@@ -88,6 +88,7 @@ func (rb ReliableBroadcast) Run(ctx context.Context) error {
 	state := rb.newState(ctx)
 	for {
 		if err := rb.selectOne(state); err != nil {
+			rb.logger.Info("exited reliable broadcaster")
 			return err
 		}
 	}
