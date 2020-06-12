@@ -13,3 +13,24 @@ message BatchResponse {}
 service Broadcaster {
   rpc Send(Batch) returns (BatchResponse) {}
 }
+
+message JoinReq {
+  uint64 instanceID = 1;
+  types.Node node = 2;
+}
+
+message JoinResp {
+  enum Code {
+    NONE = 0;
+    OK = 1;
+    OUTDATED = 2;
+  }
+  Code code = 1;
+}
+
+message ConfigurationReq {};
+
+service Bootstrap {
+  rpc Configuration(ConfigurationReq) returns (types.Configuration) {}
+  rpc Join(JoinReq) returns (JoinResp) {}
+}

@@ -23,6 +23,15 @@ func (bf BroadcastFacade) Subscribe(ctx context.Context) (*Subscription, error) 
 	return bf.mx.Subscribe(ctx)
 }
 
+func (bf BroadcastFacade) Send(ctx context.Context, msgs []*types.Message) error {
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case bf.rb.Egress() <- msgs:
+	}
+	return nil
+}
+
 // Egress is for messages that are sent by this node into the network.
 func (bf BroadcastFacade) Egress() chan<- []*types.Message {
 	return bf.rb.Egress()
