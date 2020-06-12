@@ -23,12 +23,13 @@ func NewMonitor(logger *zap.SugaredLogger,
 	ar AlertsReactor,
 ) *Monitor {
 	return &Monitor{
-		logger: logger.Named("monitor").With("node", id),
-		id:     id,
-		fd:     fd,
-		bf:     bf,
-		ar:     ar,
-		last:   last,
+		logger:   logger.Named("failure detector").With("node", id),
+		id:       id,
+		fd:       fd,
+		bf:       bf,
+		ar:       ar,
+		last:     last,
+		observed: make(chan *types.Message, 1),
 	}
 }
 
@@ -39,6 +40,8 @@ type Monitor struct {
 	bf     network.BroadcastFacade
 	ar     AlertsReactor
 	last   LastKG
+
+	observed chan *types.Message
 }
 
 // Run monitors subjects from the KGraph.
@@ -58,6 +61,16 @@ func (m *Monitor) Run(ctx context.Context) error {
 		select {
 		case <-ctx.Done():
 			return ctx.Err()
+		case msg := <-m.observed:
+			msg = types.WithInstance(configuration.ID, msg)
+			msgs := []*types.Message{msg}
+			if err := m.ar.Observe(ctx, msgs); err != nil {
+				continue
+			}
+			select {
+			case <-ctx.Done():
+			case m.bf.Egress() <- msgs:
+			}
 		case <-update:
 			graph, configuration, update = m.last.Last()
 			m.change(ctx, &group, topology, graph, configuration)
@@ -110,15 +123,9 @@ func (m *Monitor) change(ctx context.Context,
 					Type: types.Change_REMOVE,
 					Node: node,
 				}
-				msg := types.NewAlert(m.id, node.ID, change)
-				msg = types.WithInstance(configuration.ID, msg)
-
-				if err := m.ar.Observe(ctx, []*types.Message{msg}); err != nil {
-					return
-				}
 				select {
+				case m.observed <- types.NewAlert(m.id, node.ID, change):
 				case <-ctx.Done():
-				case m.bf.Egress() <- []*types.Message{msg}:
 				}
 			}
 		}(node)

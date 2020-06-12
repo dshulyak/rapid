@@ -108,7 +108,7 @@ func (p *Paxos) Tick() {
 		p.promised = newAggregate(p.classicQuorum, p.safetyQuorum)
 		p.logger.With(
 			"ballot", p.ballot+1,
-			"insntance", p.instanceID+1,
+			"instance", p.instanceID+1,
 		).Debug("sending prepare")
 		p.send(types.NewPrepareMessage(p.ballot+1, p.instanceID+1))
 	}
@@ -178,7 +178,7 @@ func (p *Paxos) commit(v *types.LearnedValue) {
 	}
 
 	p.logger.With(
-		"instance", p.instanceID,
+		"new instanceID", p.instanceID,
 		"classic quorum", p.classicQuorum,
 		"fast quorum", p.fastQuorum,
 	).Info("updated configuration")

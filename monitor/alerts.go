@@ -54,6 +54,7 @@ func (a *Alerts) Update(configuration *types.Configuration) {
 		a.hw = a.kg.K
 	}
 	a.logger.With(
+		"instanceID", a.instanceID,
 		"K", a.kg.K,
 		"LW", a.lw,
 		"HW", a.hw,

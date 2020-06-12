@@ -70,10 +70,11 @@ func (s Service) Join(ctx context.Context, instanceID uint64, node *types.Node) 
 	if instanceID < conf.ID {
 		return ErrOldConfiguration
 	}
-	msgs := []*types.Message{types.NewAlert(s.nodeID, node.ID, &types.Change{
+	msg := types.NewAlert(s.nodeID, node.ID, &types.Change{
 		Type: types.Change_JOIN,
 		Node: node,
-	})}
+	})
+	msgs := []*types.Message{types.WithInstance(conf.ID, msg)}
 	if err := s.am.Observe(ctx, msgs); err != nil {
 		return err
 	}
@@ -134,5 +135,6 @@ func (c Client) Join(ctx context.Context, instanceID uint64, node, peer *types.N
 	if err != nil {
 		return err
 	}
+	c.logger.With("peer", peer.ID).Debug("sending join request")
 	return client.Join(ctx, instanceID, node)
 }

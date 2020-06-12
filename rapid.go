@@ -137,9 +137,12 @@ func (r Rapid) Run(ctx context.Context) error {
 		for i := 0; i < r.conf.JoinTries; i++ {
 			configuration, err = r.join(ctx, node)
 			if err != nil {
-				return err
+				continue
 			}
 			break
+		}
+		if err != nil {
+			return err
 		}
 	} else {
 		configuration = &types.Configuration{
@@ -215,6 +218,7 @@ func (r Rapid) Run(ctx context.Context) error {
 	// TODO pass channel for proposals directly to alerts reactor
 	// changeset must be sorted before posting to that channel
 	group.Go(func() error {
+		defer r.logger.Info("changeset propagator exited")
 		for changeset := range mon.Changes() {
 			// equality depends on the order
 			sort.Slice(changeset, func(i, j int) bool {
@@ -242,11 +246,16 @@ func (r Rapid) join(ctx context.Context, node *types.Node) (*types.Configuration
 	).Info("got configuration from seeds")
 
 	graph := graph.New(r.conf.Connectivity, configuration.Nodes)
-	observers := []*types.Node{}
+	visited := map[uint64]struct{}{}
+	observers := make([]*types.Node, 0, r.conf.Connectivity)
 	group, gctx := errgroup.WithContext(ctx)
 	graph.IterateObservers(node.ID, func(peer *types.Node) bool {
 		peer = peer
+		if _, exist := visited[peer.ID]; exist {
+			return true
+		}
 		observers = append(observers, peer)
+		visited[peer.ID] = struct{}{}
 		group.Go(func() error {
 			return client.Join(gctx, configuration.ID, node, peer)
 		})
