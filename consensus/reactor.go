@@ -83,14 +83,9 @@ func (c *Reactor) Run(ctx context.Context) (err error) {
 			egress = nil
 			c.backend.Messages = nil
 		}
-		if len(c.backend.Values) > 0 {
-			for _, val := range c.backend.Values {
-				c.configuration.Update(&types.Configuration{
-					ID:    val.Sequence,
-					Nodes: val.Value.Nodes,
-				})
-			}
-			c.backend.Values = nil
+		if c.backend.Update != nil {
+			c.configuration.Update(c.backend.Update)
+			c.backend.Update = nil
 		}
 		if len(c.backend.Messages) > 0 {
 			egress = c.bf.Egress()

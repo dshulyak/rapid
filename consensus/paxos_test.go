@@ -73,10 +73,7 @@ func TestPaxosCommitedInFastRound(t *testing.T) {
 	for _, msg := range msgs {
 		pax.Step(msg)
 	}
-
-	values := pax.Values
-	require.Len(t, values, 1)
-	require.Equal(t, value, values[0].Value)
+	require.NotNil(t, pax.Update)
 }
 
 func TestPaxosStartClassicRoundOnTimeout(t *testing.T) {
@@ -122,7 +119,7 @@ func TestPaxosFullRoundWithConflicts(t *testing.T) {
 		pax.Step(types.WithRouting(node.ID, nil, types.NewAcceptedMessage(0, 1, two)))
 	}
 	require.Empty(t, pax.Messages)
-	require.Empty(t, pax.Values)
+	require.Empty(t, pax.Update)
 
 	pax.Tick()
 	msgs := pax.Messages
